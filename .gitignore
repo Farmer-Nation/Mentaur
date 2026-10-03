@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local session data (captured screen frames, transcripts — may contain PII)
+/data/sessions/
+/data/teach-sessions/
 
 # vercel
 .vercel

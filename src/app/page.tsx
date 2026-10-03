@@ -1,69 +1,82 @@
-import Image from "next/image";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="max-w-4xl mx-auto px-6 py-16">
+      <div className="mb-14">
+        <p className="text-xs uppercase tracking-widest text-sky-500 mb-3">
+          Hack-Nation × ElevenLabs — 7th Global AI Hackathon
+        </p>
+        <h1 className="text-3xl font-semibold mb-3">The AI Apprentice</h1>
+        <p className="text-neutral-400 max-w-2xl">
+          An apprentice that watches how screen work is really done, asks why, maps the workflow
+          with its guardrails, and teaches the next hire what the expert knows — before it walks
+          out the door.
+        </p>
+      </div>
+
+      <div className="grid gap-4 mb-14">
+        <Link
+          href="/capture"
+          className="border border-neutral-800 rounded-lg p-5 hover:bg-neutral-900 transition-colors block"
+        >
+          <div className="text-xs text-sky-500 mb-1">Module 1</div>
+          <div className="text-lg font-semibold mb-1">Capture</div>
+          <p className="text-sm text-neutral-400">
+            Share your screen and do a real task. The apprentice stays silent while you work and
+            asks at natural pauses — why this step, is there a limit, when would you stop and ask
+            someone. At least three live questions, one about a guardrail.
+          </p>
+        </Link>
+
+        <div className="border border-neutral-800 rounded-lg p-5">
+          <div className="text-xs text-sky-500 mb-1">Module 2</div>
+          <div className="text-lg font-semibold mb-1">Map</div>
+          <p className="text-sm text-neutral-400">
+            Reached automatically at the end of a capture session. A spoken debrief closes the
+            gaps, ends with a teach-back the expert confirms, and produces a clickable Work Map —
+            every step linked to its screen moment, decision, reason, and guardrails.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="border border-neutral-800 rounded-lg p-5">
+          <div className="text-xs text-sky-500 mb-1">Module 3</div>
+          <div className="text-lg font-semibold mb-1">Teach</div>
+          <p className="text-sm text-neutral-400">
+            Started from a finished Work Map (via its &quot;Start Teach session&quot; link). A new
+            hire works a fresh case while the tutor watches, explains steps the way the expert
+            did, and catches a wrong decision before it&apos;s saved.
+          </p>
         </div>
-      </main>
-    </div>
+
+        <a
+          href="/sandbox?set=a"
+          target="_blank"
+          rel="noreferrer"
+          className="border border-neutral-800 rounded-lg p-5 hover:bg-neutral-900 transition-colors block"
+        >
+          <div className="text-xs text-neutral-500 mb-1">Sandbox</div>
+          <div className="text-lg font-semibold mb-1">Fake ERP ↗</div>
+          <p className="text-sm text-neutral-400">
+            No workflow of your own handy? This is the screen to share: three invoices, one over
+            the €5,000 capex line, one from a supplier that double-bills every December, one from
+            the Czech subsidiary needing a second approval.
+          </p>
+        </a>
+      </div>
+
+      <div className="border-t border-neutral-800 pt-8">
+        <h2 className="text-sm font-semibold text-neutral-300 mb-2">The moonshot</h2>
+        <p className="text-sm text-neutral-500 max-w-2xl">
+          Today&apos;s MVP captures one expert, one task, one new hire. Every additional expert who
+          runs a capture session adds to the same company-wide Work Map — a living memory that
+          stays current because the apprentice only has to ask about what changed, not relearn
+          everything. From there: an always-on apprentice that notices unfamiliar cases during
+          everyday work, agent-ready guardrails so routine steps can be automated safely while
+          people keep the judgment calls, and eventually an anonymized operations manual for how
+          the world&apos;s digital work actually gets done.
+        </p>
+      </div>
+    </main>
   );
 }
