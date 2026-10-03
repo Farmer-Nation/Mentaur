@@ -1,6 +1,0 @@
-# TODO(verify): confirm field names against the Omnigent custom-agent docs
-# (directory layout + config.yaml). Keep the instructions in prompt.md and
-# point the config at it the way the docs describe.
-name: data
-type: omnigent
-model: databricks-claude-sonnet-4-6   # or any model your setup supports
