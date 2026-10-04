@@ -105,6 +105,26 @@ export function debriefQuestions(invoices, qa) {
   return out;
 }
 
+export function screenDebriefQuestions(events, qa) {
+  const out = [];
+  const answered = new Set(qa.map((x) => x.stepKey));
+  if (!answered.has('screen_debrief_goal')) {
+    out.push({ invId: null, guardrail: false, stepKey: 'screen_debrief_goal',
+      q: 'Looking back at the work you just shared, what outcome were you trying to achieve?' });
+  }
+  if (!answered.has('screen_debrief_reason')) {
+    out.push({ invId: null, guardrail: false, stepKey: 'screen_debrief_reason',
+      q: 'Which signals or clues guided your most important decision in that session?' });
+  }
+  if (!answered.has('screen_debrief_guardrail')) {
+    out.push({ invId: null, guardrail: true, stepKey: 'screen_debrief_guardrail',
+      q: 'What would make you stop, verify, or ask someone for help in this workflow?' });
+  }
+  out.push({ invId: null, guardrail: true, stepKey: 'debrief_general',
+    q: 'What is the single mistake a new hire is most likely to make here?' });
+  return out;
+}
+
 // Coverage model used for "when it has understood".
 export function coverage(invoices, qa) {
   const items = [];

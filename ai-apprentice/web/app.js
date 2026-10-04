@@ -16,8 +16,10 @@ const S = {
   costCenters: [], config: null, pending: null, redact: false, offRecord: false,
   speaking: false, micOn: false, recog: null, recogActive: false, micEnding: false,
   micBlocked: false, micDraft: '', voiceAnswerSubmitted: false,
-  curriculum: null, workMap: [], guideLanguage: 'en',
+  curriculum: null, workMap: [], guideLanguage: 'en', studentLanguage: 'en',
   teach: null, practiceStarted: false, shareStream: null, sharePaused: false, questionsPaused: false, sharing: false,
+  redactionBusy: false, lastRedactionAt: 0,
+  frameSeq: 0, lastFrameSeq: 0, suggestionsHidden: false, relayInFlight: false, pendingRelay: null,
   lastVisualFingerprint: null, visionDirty: false, lastVisionSentAt: 0,
   activeAudio: null, speechToken: 0,
 };
@@ -39,6 +41,7 @@ function localSpeak(text, lang) {
     } catch { resolve(); }
   });
 }
+$('#suggestionsClose').onclick = () => { S.suggestionsHidden = true; $('#suggestions').style.display = 'none'; };
 async function speak(text, lang) {
   if (!$('#ttsToggle').checked) return;
   stopSpeech({ announce: false });
@@ -201,6 +204,54 @@ function addMsg(role, text, opts = {}) {
 let actTimer = null;
 function reportActivity(typing) { if (!isGuide) return; clearTimeout(actTimer); api(`/api/room/${CODE}/activity`, { typing: !!typing }); if (typing) actTimer = setTimeout(() => api(`/api/room/${CODE}/activity`, { typing: false }), 1200); }
 
+let ocrWorkerPromise;
+async function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = import('/vendor/tesseract/tesseract.esm.min.js')
+      .then(({ createWorker }) => createWorker('eng', 1, {
+        workerPath: '/vendor/tesseract/worker.min.js',
+        corePath: '/vendor/tesseract/tesseract-core-lstm.wasm.js',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+      }));
+  }
+  return ocrWorkerPromise;
+}
+
+function containsSensitiveText(text) {
+  return /\b[\w.+-]+@[\w-]+\.[\w.-]+\b|\b(?:\+?\d[\d\s().-]{7,}\d)\b|€\s?[\d.,]+|\bIBAN[:\s]*[A-Z]{2}\d{2}[A-Z0-9]{10,}\b|Baumann Maschinen GmbH|Novák s\.r\.o\.|Weber Supplies|Hartmann Werkzeug AG/i.test(text);
+}
+
+async function redactSharedCanvas(canvas) {
+  if (!S.redact) return canvas;
+  const ctx = canvas.getContext('2d');
+  try {
+    const worker = await getOcrWorker();
+    const { data } = await worker.recognize(canvas);
+    for (const line of data.lines || []) {
+      if (!containsSensitiveText(line.text)) continue;
+      const pad = 4;
+      const x = Math.max(0, line.bbox.x0 - pad);
+      const y = Math.max(0, line.bbox.y0 - pad);
+      const w = Math.min(canvas.width - x, line.bbox.x1 - line.bbox.x0 + pad * 2);
+      const h = Math.min(canvas.height - y, line.bbox.y1 - line.bbox.y0 + pad * 2);
+      ctx.fillStyle = '#111';
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(12, Math.round(h * 0.65))}px sans-serif`;
+      ctx.fillText('[REDACTED]', x + 3, y + Math.max(12, Math.round(h * 0.72)));
+    }
+  } catch (err) {
+    console.warn('Screen redaction unavailable; hiding this frame:', err);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#111';
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif';
+    ctx.fillText('[SCREEN HIDDEN: REDACTION UNAVAILABLE]', 16, 32);
+  }
+  return canvas;
+}
+
 /* ============================================================
    SSE — the room talks to both roles here
    ============================================================ */
@@ -212,7 +263,7 @@ function connect() {
       case 'hello': setStatus(idleText()); break;
       case 'presence': renderPresence(d.presence); break;
       case 'event': onEvent(d); break;
-      case 'frame': onFrame(d.frame); break;
+      case 'frame': onFrame(d.frame, d.seq); break;
       case 'ask': onAsk(d); break;
       case 'ack': onAck(d); break;
       case 'chat': onChat(d.msg); break;
@@ -226,7 +277,7 @@ function connect() {
       case 'redact': break;
       case 'question_mode': onQuestionMode(d.paused); break;
       case 'share_state': onShareState(d); break;
-      case 'language': onLanguage(d.lang); break;
+      case 'language': onLanguage(d.role, d.lang); break;
     }
   };
 }
@@ -260,36 +311,45 @@ function onAck(d) {
 /* ---------- language ---------- */
 const LANG_NAME = { en: 'English', ja: 'Japanese', vi: 'Vietnamese' };
 function renderLanguageUI() {
-  if (isGuide) {
-    $('#langPicker').style.display = 'flex';
-    $('#langIndicator').style.display = 'none';
-    document.querySelectorAll('.lang-opt').forEach((b) => b.classList.toggle('active', b.dataset.lang === S.guideLanguage));
-  } else {
-    $('#langPicker').style.display = 'none';
-    const ind = $('#langIndicator');
-    if (S.guideLanguage === 'en') { ind.style.display = 'none'; }
-    else { ind.style.display = 'inline-flex'; ind.textContent = `Guide explains in ${LANG_NAME[S.guideLanguage]} · shown to you in English`; }
-  }
+  $('#langPicker').style.display = 'flex';
+  $('#langIndicator').style.display = 'none';
+  $('#langLabel').textContent = isGuide ? 'Your language' : 'Your language';
+  const selected = isGuide ? S.guideLanguage : S.studentLanguage;
+  document.querySelectorAll('.lang-opt').forEach((b) => b.classList.toggle('active', b.dataset.lang === selected));
 }
-function onLanguage(lang) { S.guideLanguage = lang; renderLanguageUI(); }
+function onLanguage(role, lang) {
+  if (role === 'student') S.studentLanguage = lang;
+  else S.guideLanguage = lang;
+  renderLanguageUI();
+}
 async function setGuideLanguage(lang) {
   if (lang === S.guideLanguage) return;
   S.guideLanguage = lang; renderLanguageUI();
-  await api(`/api/room/${CODE}/language`, { lang });
+  await api(`/api/room/${CODE}/language`, { lang, role: 'guide' });
   toast(lang === 'en' ? 'Explaining in English' : `Explaining in ${LANG_NAME[lang]}`);
 }
-document.querySelectorAll('.lang-opt').forEach((btn) => btn.addEventListener('click', () => setGuideLanguage(btn.dataset.lang)));
+async function setStudentLanguage(lang) {
+  if (lang === S.studentLanguage) return;
+  S.studentLanguage = lang; renderLanguageUI();
+  await api(`/api/room/${CODE}/language`, { lang, role: 'student' });
+  toast(lang === 'en' ? 'Showing English' : `Showing ${LANG_NAME[lang]}`);
+}
+document.querySelectorAll('.lang-opt').forEach((btn) => btn.addEventListener('click', () => isGuide ? setGuideLanguage(btn.dataset.lang) : setStudentLanguage(btn.dataset.lang)));
 
 function onChat(msg, { speakStudentQuestion = true, speakAgent = true } = {}) {
   if (msg.from === 'guide') {
-    const showOriginal = isGuide && msg.original;
-    const opts = (!isGuide && msg.original) ? { lbl: `Guide · translated from ${LANG_NAME[S.guideLanguage] || 'their language'}` } : {};
-    addMsg('guide', showOriginal ? msg.original : msg.text, opts);
+    const displayText = isGuide ? (msg.guideText || msg.original || msg.text) : (msg.studentText || msg.text);
+    const opts = !isGuide && S.studentLanguage !== S.guideLanguage
+      ? { lbl: `Guide · translated to ${LANG_NAME[S.studentLanguage]}` } : {};
+    addMsg('guide', displayText, opts);
   }
   else if (msg.from === 'student') {
-    addMsg('student', msg.text);
+    const displayText = isGuide ? (msg.guideText || msg.text) : (msg.studentText || msg.text);
+    const opts = isGuide && S.studentLanguage !== S.guideLanguage
+      ? { lbl: `Student · translated to ${LANG_NAME[S.guideLanguage]}` } : {};
+    addMsg(isGuide ? 'student' : 'user', displayText, opts);
     if (speakStudentQuestion && S.phase !== 'practice') {
-      speak(msg.text);
+      speak(displayText, isGuide ? S.guideLanguage : S.studentLanguage);
     }
     if (isGuide) toast('Student asked a question');
   }
@@ -318,7 +378,9 @@ async function boot() {
   if (view.error) { $('#surface').innerHTML = `<div class="intro"><h3>Room not found</h3><p>The code <b>${CODE}</b> isn’t active. <a href="/">Go back</a> and check it.</p></div>`; return; }
   S.invoices = view.invoices; S.phase = view.phase; S.curriculum = view.curriculum; S.workMap = view.workMap;
   S.questionsPaused = !!view.controls?.questionsPaused; S.sharePaused = !!view.controls?.shareState?.paused; S.sharing = !!view.controls?.shareState?.sharing;
-  S.guideLanguage = view.guideLanguage || 'en'; renderLanguageUI();
+  S.guideLanguage = view.guideLanguage || 'en';
+  S.studentLanguage = view.studentLanguage || 'en';
+  renderLanguageUI();
   renderPresence(view.presence);
   connect();
 
@@ -327,7 +389,7 @@ async function boot() {
   else renderStudentLive();
   if (S.phase === 'capture') onShareState(view.controls?.shareState || { sharing: false, paused: false });
   setOrb('listening'); setStatus(idleText());
-  const greeting = "Hi, I'm Mentaur. I'll assist you during this simulation demo.";
+  const greeting = "Hi, I'm Mentaur. I'll assist you during this session.";
   addMsg('agent', greeting);
   await speak(greeting);
   // replay recent transcript for late joiners
@@ -440,6 +502,10 @@ async function toggleSharePause() {
 
 function onShareState(d) {
   S.sharing = d.sharing !== false; S.sharePaused = !!d.paused;
+  if (d.sharing === false) {
+    S.pending = null;
+    stopSpeech({ announce: false });
+  }
   if (isGuide) {
     renderCaptureControls();
     const state = $('#guideMirrorState');
@@ -454,6 +520,12 @@ function onShareState(d) {
   if (badge) {
     badge.textContent = d.sharing === false ? 'Screen share stopped' : d.paused ? 'Screen share paused' : '';
     badge.classList.toggle('hidden', d.sharing !== false && !d.paused);
+  }
+  if (d.sharing === false && !isGuide) {
+    const img = $('#mirrorImg');
+    img?.classList.add('hidden');
+    $('#mirrorEmpty')?.classList.remove('hidden');
+    S.lastFrameSeq = 0;
   }
 }
 
@@ -470,6 +542,7 @@ async function shareScreen() {
     startFrameLoop(v);
     stream.getVideoTracks()[0].addEventListener('ended', async () => {
       S.shareStream = null; S.sharing = false; S.sharePaused = false; S.lastVisualFingerprint = null; S.visionDirty = false;
+      S.pendingRelay = null;
       v.srcObject = null; $('#guideSharePreview')?.classList.add('hidden');
       $('#shareBtn').textContent = '▣ Share real screen'; $('#shareBtn').disabled = false;
       renderCaptureControls();
@@ -495,18 +568,51 @@ function fingerprintDelta(a, b) {
 }
 function captureFrame(video, canvas) {
   const srcW = video.videoWidth || 1280, srcH = video.videoHeight || 720;
-  const w = Math.min(720, srcW), h = Math.max(1, Math.round((srcH / srcW) * w));
+  const w = Math.min(1280, srcW), h = Math.max(1, Math.round((srcH / srcW) * w));
   canvas.width = w; canvas.height = h;
   canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-  return canvas.toDataURL('image/jpeg', 0.46);
+  return canvas;
 }
 
 function startFrameLoop(video) {
   const probe = document.createElement('canvas');
   const frameCanvas = document.createElement('canvas');
+  const visionCanvas = document.createElement('canvas');
+  const sendRelay = async (dataUrl) => {
+    const seq = ++S.frameSeq;
+    try {
+      await api(`/api/room/${CODE}/frame`, { frame: dataUrl, seq });
+    } finally {
+      S.relayInFlight = false;
+      const next = S.pendingRelay;
+      S.pendingRelay = null;
+      if (next && S.shareStream?.active) relayFrame(next);
+    }
+  };
+  const relayFrame = (canvas) => {
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+    if (S.relayInFlight) {
+      S.pendingRelay = dataUrl;
+      return;
+    }
+    S.relayInFlight = true;
+    sendRelay(dataUrl);
+  };
+  const redactAndRelay = async () => {
+    if (S.redactionBusy || Date.now() - S.lastRedactionAt < 900) return;
+    S.redactionBusy = true;
+    S.lastRedactionAt = Date.now();
+    try {
+      const canvas = captureFrame(video, frameCanvas);
+      await redactSharedCanvas(canvas);
+      await relayFrame(canvas);
+    } finally {
+      S.redactionBusy = false;
+    }
+  };
   const tick = async () => {
     if (!S.shareStream || !S.shareStream.active) return;
-    if (S.sharePaused || video.readyState < 2 || !video.videoWidth) return setTimeout(tick, 1500);
+    if (S.sharePaused || video.readyState < 2 || !video.videoWidth) return setTimeout(tick, 500);
 
     const fp = fingerprint(video, probe);
     const delta = fingerprintDelta(S.lastVisualFingerprint, fp);
@@ -518,19 +624,20 @@ function startFrameLoop(video) {
       // This cheap activity ping is what keeps Mentaur quiet while the shared
       // screen is actively changing, even when Claude calls are throttled.
       reportActivity(false);
-      const relay = captureFrame(video, frameCanvas);
-      api(`/api/room/${CODE}/frame`, { frame: relay });
+      if (S.redact) redactAndRelay();
+      else relayFrame(captureFrame(video, frameCanvas));
     }
 
     const interval = Number(S.config?.visionIntervalMs) || 4000;
     if (S.config?.visionMode !== 'mock' && S.visionDirty && Date.now() - S.lastVisionSentAt >= interval) {
-      const next = captureFrame(video, frameCanvas);
+      const nextCanvas = captureFrame(video, visionCanvas);
       S.visionDirty = false; S.lastVisionSentAt = Date.now();
-      api('/api/vision', { code: CODE, next }).then((out) => {
+      if (S.redact) await redactSharedCanvas(nextCanvas);
+      api('/api/vision', { code: CODE, next: nextCanvas.toDataURL('image/jpeg', 0.72) }).then((out) => {
         if (out?.error) console.warn('Vision analysis skipped:', out.error);
       }).catch(() => { S.visionDirty = true; });
     }
-    setTimeout(tick, 1500);
+    setTimeout(tick, 500);
   };
   setTimeout(tick, 700);
 }
@@ -550,12 +657,18 @@ function renderStudentLive() {
   renderQueue();
   $('#suggestions').style.display = 'block';
 }
-function onFrame(dataUrl) { const img = $('#mirrorImg'); if (!img) return; img.src = dataUrl; img.classList.remove('hidden'); $('#mirrorEmpty')?.classList.add('hidden'); }
+function onFrame(dataUrl, seq = 0) {
+  if (seq && seq <= S.lastFrameSeq) return;
+  S.lastFrameSeq = seq || S.lastFrameSeq + 1;
+  const img = $('#mirrorImg'); if (!img) return;
+  img.src = dataUrl; img.classList.remove('hidden'); $('#mirrorEmpty')?.classList.add('hidden');
+}
 
 /* ---------- suggestions (student) ---------- */
 function renderSuggestions(list) {
   if (isGuide) return;
   const box = $('#suggestions'), wrap = $('#suggestList'); if (!wrap) return;
+  if (S.suggestionsHidden) { box.style.display = 'none'; return; }
   if (!list || !list.length) { box.style.display = S.phase === 'capture' ? 'block' : 'none'; wrap.innerHTML = '<div class="covrow" style="color:#8a93a1">Suggestions appear as the guide works…</div>'; return; }
   box.style.display = 'block'; wrap.innerHTML = '';
   list.forEach((sg) => { const b = el('button', 'suggchip', redact(sg.q)); b.onclick = () => { $('#replyBox').value = sg.q; submitReply(); }; wrap.appendChild(b); });
@@ -700,7 +813,7 @@ async function submitReply() {
   if (isGuide && S.speaking) stopSpeech({ announce: false });
   reportActivity(false);
   if (S.offRecord) { await api(`/api/room/${CODE}/offrecord`, { on: true }); S.offRecord = false; $('#offRecBtn').classList.remove('on'); }
-  await api(`/api/room/${CODE}/chat`, { from: ROLE, text: txt });
+  await api(`/api/room/${CODE}/chat`, { from: ROLE, text: txt, language: isGuide ? S.guideLanguage : S.studentLanguage });
 }
 $('#sendBtn').onclick = submitReply;
 $('#replyBox').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } });

@@ -57,7 +57,7 @@
       <div class="transcript" id="transcript" aria-live="polite"></div>
 
       <div class="suggestions" id="suggestions" style="display:none">
-        <div class="cap">Suggested questions</div>
+        <div class="suggestions-head"><div class="cap">Suggested questions</div><button class="suggestions-close" id="suggestionsClose" type="button" aria-label="Hide suggested questions" title="Hide suggested questions">×</button></div>
         <div class="panel-help">Useful prompts when you’re not sure what to ask yet.</div>
         <div id="suggestList"></div>
       </div>
@@ -73,8 +73,8 @@
           <label class="toolchip"><input type="checkbox" id="ttsToggle" checked><span class="toggle-ui"></span> Speak replies</label>
           <button class="toolchip stop-voice" id="stopVoiceBtn" type="button">■ Stop Mentaur</button>
           <label class="toolchip rec"><input type="checkbox" id="redactToggle"><span class="toggle-ui"></span> Redact PII</label>
-          <div class="lang-picker" id="langPicker" role="group" aria-label="Explain in language" style="display:none">
-            <span class="lang-label">Explain in</span>
+          <div class="lang-picker" id="langPicker" role="group" aria-label="Conversation language" style="display:none">
+            <span class="lang-label" id="langLabel">Explain in</span>
             <button type="button" class="lang-opt" data-lang="en">EN</button>
             <button type="button" class="lang-opt" data-lang="ja">日本語</button>
             <button type="button" class="lang-opt" data-lang="vi">Tiếng Việt</button>

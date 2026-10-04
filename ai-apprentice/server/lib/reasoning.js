@@ -81,10 +81,14 @@ export async function generateDebriefQuestions(room, fallback) {
   const sys = `You are designing a short debrief for a new hire learning a real workflow.
 Create only the questions needed to fill missing knowledge from the captured evidence. Ask about
 why the teacher chose an action, what evidence mattered, what could change the decision, and when
-to stop or ask for help. Avoid repeating answered topics. Return JSON:
+to stop or ask for help. ${room.captureMode === 'screen'
+  ? 'This was a real shared-screen session, not the inventory demo. Ignore all inventory/demo items and ask only about the shared-screen work.'
+  : ''} Avoid repeating answered topics. Return JSON:
 {"questions":[{"invId":"... or null","guardrail":true|false,"stepKey":"...","q":"..."}]}.`;
   const context = JSON.stringify({
-    items: room.invoices.map((i) => ({ id: i.id, description: i.desc, count: i.amount, condition: i.condition, note: i.note, decision: i.cc, action: i.action, rule: i.truth })),
+    items: room.captureMode === 'screen' ? [] : room.invoices.map((i) => ({ id: i.id, description: i.desc, count: i.amount, condition: i.condition, note: i.note, decision: i.cc, action: i.action, rule: i.truth })),
+    sharedScreenSummary: room.screenSummary || '',
+    sharedScreenEvents: room.events.slice(-12).map((e) => e.text),
     answers: room.qa,
   });
   let out;

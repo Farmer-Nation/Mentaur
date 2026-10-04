@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '../web');
 const PORT = process.env.PORT || 8787;
 const VISION_INTERVAL_MS = Math.max(2500, Number(process.env.VISION_INTERVAL_MS) || 4000);
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.wasm': 'application/wasm' };
 
 function send(res, code, body, headers = {}) {
   res.writeHead(code, { 'content-type': 'application/json', ...headers });
@@ -38,6 +38,20 @@ const server = http.createServer(async (req, res) => {
   const p = u.pathname;
   try {
     if (p.startsWith('/api/')) return await api(req, res, u);
+    if (p.startsWith('/vendor/tesseract/')) {
+      const relative = p.slice('/vendor/tesseract/'.length);
+      const roots = [
+        path.resolve(__dirname, '../node_modules/tesseract.js/dist'),
+        path.resolve(__dirname, '../node_modules/tesseract.js-core'),
+      ];
+      const full = path.resolve(roots[0], relative);
+      const coreFull = path.resolve(roots[1], relative);
+      const target = fs.existsSync(full) ? full : coreFull;
+      if (!target.startsWith(roots[0]) && !target.startsWith(roots[1])) { res.writeHead(404); return res.end('Not found'); }
+      if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
+      res.writeHead(200, { 'content-type': MIME[path.extname(target)] || 'application/octet-stream', 'cache-control': 'public, max-age=3600' });
+      return fs.createReadStream(target).pipe(res);
+    }
     let file = p === '/' ? '/index.html' : p;
     const full = path.join(WEB_DIR, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
     if (!full.startsWith(WEB_DIR) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
@@ -109,9 +123,15 @@ async function api(req, res, u) {
       case 'activity': R.reportActivity(room, body); return send(res, 200, { ok: true });
       case 'change': R.applyChange(room, body); return send(res, 200, R.roomView(room));
       case 'chat': await R.postChat(room, body); return send(res, 200, { ok: true });
-      case 'frame': if (body.frame) R.pushFrame(room, body.frame); return send(res, 200, { ok: true });
+      case 'frame': if (body.frame) R.pushFrame(room, body.frame, Number(body.seq)); return send(res, 200, { ok: true });
       case 'redact': R.setRedact(room, !!body.on); return send(res, 200, { ok: true });
-      case 'language': R.setGuideLanguage(room, body.lang); return send(res, 200, { ok: true, lang: room.guideLanguage });
+      case 'language':
+        if (body.role === 'student') {
+          R.setStudentLanguage(room, body.lang);
+          return send(res, 200, { ok: true, lang: room.studentLanguage });
+        }
+        R.setGuideLanguage(room, body.lang);
+        return send(res, 200, { ok: true, lang: room.guideLanguage });
       case 'speaking': R.setSpeaking(room, !!body.on); return send(res, 200, { ok: true });
       case 'question-mode': R.setQuestionsPaused(room, !!body.paused); return send(res, 200, { ok: true, paused: room.questionsPaused });
       case 'share-state': R.setShareState(room, body); return send(res, 200, { ok: true, shareState: room.shareState });

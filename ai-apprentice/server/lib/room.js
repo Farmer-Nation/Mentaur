@@ -11,6 +11,7 @@ import * as planner from './planner.js';
 import { buildWorkMap, toAgentJSON } from './workmap.js';
 import { phraseGuideQuestion, studentSuggestions, idleGuideQuestion, buildCurriculum, practiceFeedback, summarizeAnswer, generateDebriefQuestions, answerStudentQuestion } from './reasoning.js';
 import { translateTo, SUPPORTED_LANGS } from './translate.js';
+import { redactText } from './redact.js';
 
 const rooms = new Map(); // code -> room
 const subs = new Map(); // code -> Set<{res, role, id}>
@@ -35,13 +36,15 @@ export function createRoom() {
     code, created: Date.now(), phase: 'capture',
     invoices: simpleDemoInvoices(), events: [], qa: [], chat: [],
     suggestions: [], workMap: [], curriculum: null,
+    captureMode: 'simulation',
     pending: null, queued: null, askedKeys: new Set(),
     lastActivity: 0, typing: false, speaking: false,
     debriefQ: null, debriefIdx: -1,
     practice: {}, practiceCompleted: new Set(), latestFrame: null, redact: false,
-    screenSummary: '', lastVisionQuestion: null, lastActivitySummary: '', lastSummaryAt: -Infinity,
+    screenSummary: '', lastVisionQuestion: null, lastActivitySummary: '', lastSummaryAt: -Infinity, frameSeq: 0,
     questionsPaused: false, shareState: { sharing: false, paused: false },
     guideLanguage: 'en',
+    studentLanguage: 'en',
     lastStudentQuestionAt: 0, lastQuestionAt: 0, lastQuestionAttemptAt: 0,
     ackUntil: 0,
     lastSuggestionsAt: -Infinity, suggestionsBusy: false, idleQuestionBusy: false,
@@ -60,6 +63,7 @@ export function roomView(room) {
     workMap: room.workMap, curriculum: room.curriculum, redact: room.redact,
     controls: { questionsPaused: room.questionsPaused, shareState: room.shareState },
     guideLanguage: room.guideLanguage,
+    studentLanguage: room.studentLanguage,
     latestFrame: room.latestFrame,
     presence: { guide: room.guidePresent, students: room.students },
   };
@@ -100,6 +104,7 @@ function pushEvent(room, text, meta = {}) {
 
 // A change from the Guide's sandbox ERP (or the vision pipeline).
 export function applyChange(room, { invId, trigger, cc, action }) {
+  if (room.captureMode === 'screen' || room.shareState.sharing) return;
   const inv = room.invoices.find((i) => i.id === invId);
   if (!inv) return;
   if (trigger === 'open') { pushEvent(room, `${invId} opened`); return; }
@@ -118,9 +123,12 @@ export function applyChange(room, { invId, trigger, cc, action }) {
 }
 
 // Relayed screenshot so the Student sees the Guide's real screen (vision mode).
-export function pushFrame(room, dataUrl) {
+export function pushFrame(room, dataUrl, seq) {
+  if (!room.shareState.sharing) return;
+  if (Number.isFinite(seq) && seq < room.frameSeq) return;
+  room.frameSeq = Number.isFinite(seq) ? seq : room.frameSeq + 1;
   room.latestFrame = dataUrl;
-  broadcast(room, { type: 'frame', frame: dataUrl }, 'student');
+  broadcast(room, { type: 'frame', frame: dataUrl, seq: room.frameSeq }, 'student');
 }
 
 function recordActivitySummary(room, text) {
@@ -182,19 +190,34 @@ export function setQuestionsPaused(room, paused) {
 }
 
 export function setShareState(room, state = {}) {
+  const wasSharing = room.shareState.sharing;
   room.shareState = {
     sharing: typeof state.sharing === 'boolean' ? state.sharing : room.shareState.sharing,
     paused: typeof state.paused === 'boolean' ? state.paused : room.shareState.paused,
   };
+  const isSharing = room.shareState.sharing && !room.shareState.paused;
+  if (isSharing) {
+    room.captureMode = 'screen';
+    if (room.queued?.source === 'simulation') room.queued = null;
+    if (room.pending?.source === 'simulation') room.pending = null;
+  }
+  if (!room.shareState.sharing) room.captureMode = 'simulation';
   if ((!room.shareState.sharing || room.shareState.paused) && ['vision', 'idle'].includes(room.queued?.source)) room.queued = null;
   broadcast(room, { type: 'share_state', ...room.shareState });
+  if (wasSharing && !room.shareState.sharing && room.phase === 'capture' && !room._debriefOffered) {
+    room.pending = null;
+    room.queued = null;
+    room._debriefOffered = true;
+    broadcast(room, { type: 'debrief_ready' });
+  }
 }
 
 function queueGuideQuestion(room, trigger, inv) {
+  if (room.captureMode === 'screen' || room.shareState.sharing) return;
   if (room.pending || room.queued) return;
   const cand = planner.questionFor(trigger, inv);
   if (!cand || room.askedKeys.has(cand.key)) return;
-  room.queued = cand; // released by the watcher after a pause
+  room.queued = { ...cand, source: 'simulation' }; // released by the watcher after a pause
 }
 
 async function refreshSuggestions(room) {
@@ -211,19 +234,25 @@ async function refreshSuggestions(room) {
 // ---- chat: either side can speak/type ----
 export async function postChat(room, { from, text, to }) {
   if (from === 'student') {
-    const msg = { from, text, t: now(room) };
+    const studentText = String(text || '').trim();
+    const textEn = room.studentLanguage === 'en' ? studentText : await translateTo(studentText, 'en');
+    const guideText = room.guideLanguage === 'en' ? textEn : await translateTo(textEn, room.guideLanguage);
+    const safeText = redactText(textEn, room.redact);
+    const safeStudentText = redactText(studentText, room.redact);
+    const safeGuideText = redactText(guideText, room.redact);
+    const msg = { from, text: safeText, studentText: safeStudentText, guideText: safeGuideText, t: now(room) };
     room.chat.push(msg);
     broadcast(room, { type: 'chat', msg });
     // a student question for the guide; also captured as a clarification
     room.lastStudentQuestionAt = now(room);
-    room.qa.push({ q: `(student) ${text}`, a: null, invId: null, stepKey: 'student_q', guardrail: false, t: now(room) });
+    room.qa.push({ q: `(student) ${safeText}`, a: null, invId: null, stepKey: 'student_q', guardrail: false, t: now(room) });
     refreshSuggestions(room);
     // During capture the Guide owns the explanation. Mentaur only speaks on
     // the Guide's behalf after the Work Map has been completed for practice.
     if (room.phase === 'practice') {
       let answer;
       try {
-        answer = await answerStudentQuestion(room, text);
+        answer = await answerStudentQuestion(room, safeText);
       } catch (err) {
         console.warn(`[reasoning] student answer unavailable: ${err.message}`);
         answer = 'Use the Work Map evidence first, then ask a human if the condition or count is unclear.';
@@ -242,7 +271,11 @@ export async function postChat(room, { from, text, to }) {
       try { textEn = await translateTo(text, 'en'); }
       catch (err) { console.warn(`[translate] guide->en unavailable: ${err.message}`); }
     }
-    const msg = { from, text: textEn, t: now(room) };
+    const studentText = room.studentLanguage === 'en' ? textEn : await translateTo(textEn, room.studentLanguage);
+    const safeText = redactText(textEn, room.redact);
+    const safeGuideText = redactText(text, room.redact);
+    const safeStudentText = redactText(studentText, room.redact);
+    const msg = { from, text: safeText, guideText: safeGuideText, studentText: safeStudentText, t: now(room) };
     if (lang !== 'en') msg.original = text;
     room.chat.push(msg);
     broadcast(room, { type: 'chat', msg });
@@ -250,7 +283,7 @@ export async function postChat(room, { from, text, to }) {
     // guide speaking: if answering the AI's pending question, capture it
     if (room.pending) {
       const q = room.pending;
-      room.qa.push({ q: q.q, a: textEn, invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
+      room.qa.push({ q: q.q, a: redactText(textEn, room.redact), invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
       room.pending = null;
       room.ackUntil = now(room) + 3500;
       let idea;
@@ -286,14 +319,18 @@ export function setRedact(room, on) { room.redact = on; broadcast(room, { type: 
 // other way so the Guide hears/reads them in their own language.
 export function setGuideLanguage(room, lang) {
   room.guideLanguage = SUPPORTED_LANGS.includes(lang) ? lang : 'en';
-  broadcast(room, { type: 'language', lang: room.guideLanguage });
+  broadcast(room, { type: 'language', role: 'guide', lang: room.guideLanguage });
+}
+export function setStudentLanguage(room, lang) {
+  room.studentLanguage = SUPPORTED_LANGS.includes(lang) ? lang : 'en';
+  broadcast(room, { type: 'language', role: 'student', lang: room.studentLanguage });
 }
 export function setSpeaking(room, on) { room.speaking = on; }
 export function setOffRecord(room, on) { room.offRecord = on; }
 
 // ---- debrief + teach-back (AI with the guide) ----
 function maybeOfferDebrief(room) {
-  if (room.invoices.every((i) => i.action) && room.phase === 'capture' &&
+  if (room.captureMode !== 'screen' && room.invoices.every((i) => i.action) && room.phase === 'capture' &&
       !room.pending && !room.queued && !room._debriefOffered) {
     room._debriefOffered = true;
     broadcast(room, { type: 'debrief_ready' });
@@ -301,7 +338,10 @@ function maybeOfferDebrief(room) {
 }
 export async function startDebrief(room) {
   room.phase = 'debrief';
-  room.debriefQ = await generateDebriefQuestions(room, planner.debriefQuestions(room.invoices, room.qa));
+  const fallback = room.captureMode === 'screen'
+    ? planner.screenDebriefQuestions(room.events, room.qa)
+    : planner.debriefQuestions(room.invoices, room.qa);
+  room.debriefQ = await generateDebriefQuestions(room, fallback);
   room.debriefIdx = -1;
   broadcast(room, { type: 'phase', phase: 'debrief' });
   nextDebrief(room);
@@ -425,7 +465,7 @@ export function startWatcher() {
         }
         room.pending = { ...phrased, questionLocal, askedAt: now(room), repeatCount: 0 };
         room.askedKeys.add(cand.key); room.lastQuestionAt = now(room);
-        broadcast(room, { type: 'ask', question: phrased.q, questionLocal, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId });
+        broadcast(room, { type: 'ask', question: phrased.q, questionLocal, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId, source: phrased.source });
       }
       if (room.pending && !room.speaking && at - (room.pending.askedAt || 0) >= QUESTION_REPEAT_MS) {
         room.pending.askedAt = at;

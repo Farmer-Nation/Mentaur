@@ -105,6 +105,14 @@ t('high-value vision questions can still queue immediately and pause clears them
 });
 
 console.log('\nplanner — understanding + debrief');
+t('teacher and student keep independent language preferences', () => {
+  const code = rooms.createRoom(); const room = rooms.getRoom(code);
+  rooms.setGuideLanguage(room, 'en');
+  rooms.setStudentLanguage(room, 'vi');
+  assert.strictEqual(room.guideLanguage, 'en');
+  assert.strictEqual(room.studentLanguage, 'vi');
+  assert.strictEqual(rooms.roomView(room).studentLanguage, 'vi');
+});
 t('not understood until every step has reason + guardrail', () => {
   const inv = captureInvoices().map((i) => ({ ...i, action: i.truth.action, cc: i.truth.cc }));
   assert.strictEqual(planner.isUnderstood(inv, []), false);

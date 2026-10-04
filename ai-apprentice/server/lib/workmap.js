@@ -8,6 +8,28 @@ function fmt(ms) {
 
 export function buildWorkMap(sess) {
   const { invoices, qa, events } = sess;
+  if (sess.captureMode === 'screen') {
+    const answers = qa.filter((x) => x.a && x.stepKey !== 'student_q');
+    const lastEvent = events.at(-1);
+    const reason = answers.find((x) => !x.guardrail)?.a || 'Captured from the shared session.';
+    const guardrail = answers.find((x) => x.guardrail)?.a || 'Stop and ask for help when the evidence or next step is unclear.';
+    return [{
+      idx: 1,
+      title: 'Shared workflow session',
+      moment: lastEvent ? fmt(lastEvent.t) : '—',
+      momentWhat: lastEvent?.text || 'Observed work on the shared screen',
+      decision: 'Follow the workflow demonstrated in the session',
+      signal: events.slice(-3).map((e) => e.text).join(' · ') || 'Shared-screen evidence',
+      evidence: events.slice(-3).map((e) => e.text),
+      reason,
+      reasonWho: answers.some((x) => !x.guardrail) ? 'expert, during the session' : 'inferred',
+      guardrail,
+      judgment: true,
+      hasGuard: answers.some((x) => x.guardrail),
+      invId: null,
+      tutorial: ['Observe the shared workflow and its evidence.', 'Follow the demonstrated decision process.', 'Stop and verify when the guardrail applies.'],
+    }];
+  }
   const steps = [];
   invoices.forEach((inv, i) => {
     if (!inv.action) return;
