@@ -1,6 +1,6 @@
 # The AI Apprentice
 
-# Use the Version2 branch
+# ❗ Pleas use the Version2 branch!
 A working MVP for the Hack-Nation × ElevenLabs "AI Apprentice" challenge: an apprentice that
 watches an expert work, asks why at the right moments, maps the workflow into a clickable Work
 Map, and teaches the next hire what the expert knows.
