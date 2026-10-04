@@ -4,7 +4,7 @@
   "description": "Mentaur: a background voice agent that captures an expert's judgment while they work, maps it into a clickable Work Map, and teaches it to the next hire. Hack-Nation x ElevenLabs — The AI Apprentice.",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "scripts": {
     "start": "node server/index.js",
