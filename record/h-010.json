@@ -1,0 +1,26 @@
+{
+ "id": "h-010",
+ "time": "2026-10-03T21:05:02+00:00",
+ "from": "planner",
+ "to": "safety",
+ "type": "plan",
+ "refs": [
+  "record/h-009.json",
+  "record/h-008.json",
+  "data/defects.json",
+  "data/pages/p001.html",
+  "data/pages/p003.html",
+  "record/h-004.json"
+ ],
+ "claim": "[AGENT-GENERATED PLAN, untested] Compare axe-core vs an LLM agent on the 20 pages in data/pages (40 labelled defects: focus_order 10, wrong_role 9, missing_label 8, misleading_alt 7, low_contrast 6) to test H1-H7 (h-009). SCOPE GAP: missing alt text and heading order are NOT in the data (h-008; --defects was denied), so this plan cannot test them and makes no claims about them. Closing the gap needs a generator change, out of scope and needing separate approval.\n\nMATCHING RULE (fixed before running). A finding is (page_id, element_id, category), with categories mapped to defect types in advance. (1) Recall: a defect is detected if at least one finding of the matching type is on any element in its element_ids. (2) focus_order groups have 4 ids (t-3 is the container div, t-4..t-6 the buttons, e.g. p003-d2): primary rule is any one id; strict secondary rule is at least 2 of the 3 buttons. Report both. (3) Precision: a finding is a true positive if its element is in element_ids of a defect of the same type, otherwise false positive; type-agnostic precision reported as secondary. (4) axe 'incomplete' results reported separately and not counted as detections. (5) Per-type recall with Wilson 95% CIs; n of 6-10 per type means only large gaps are interpretable.\n\nOPTION A - single pass: axe once, LLM once per page on raw HTML. 20 LLM calls, about 20k tokens in and 6k out (my estimate; pages about 700 chars). Cost about $0.15 assuming $3/M in and $15/M out (ASSUMPTION, no source). Runtime about 5 min (axe about 2-5 s/page, LLM about 5-10 s/call; estimates). Learning: point estimates for H1-H5, H7; cannot test variance (H6); one LLM sample may be luck. Feasibility high.\n\nOPTION B - A plus repeated LLM runs for variance: LLM k=5 repeats, same prompt/settings, fresh context, seeds logged if supported; axe run twice to confirm determinism. 100 LLM calls, about 100k in and 30k out. Cost about $0.75 (same assumed prices). Runtime about 10-15 min sequential. Learning: all of A plus per-defect detection frequency, mean/SD of recall and precision across runs, and single-run vs majority-vote vs union for H7. Directly tests H6 variance. Feasibility high.\n\nOPTION C - B plus a rendered-input LLM arm (HTML plus computed styles or screenshot) for H4. About 200 LLM calls, cost about $2-6 (vision pricing unknown, ASSUMPTION), runtime about 30 min. Separates input modality from ability on contrast, but only 6 contrast defects. Feasibility medium: renderer pipeline not verified.\n\nOPTION D - axe-only pilot, no LLM: about $0, about 2 min. Cheap check of H1, H4, and H5 (does axe flag positive tabindex?). Cannot answer the main comparison.\n\nRECOMMENDATION: Option B, running axe first (this is Option D, as B's first stage). Best learning per cost; extra spend over A is under $1 at assumed prices; only option testing H6 variance. Defer C until B shows a contrast gap. Fix raw HTML input and model/prompt version before running; pre-register the matching rule; no prompt tuning after seeing scores. Caveats: ground truth is generator labels, unverified (h-008); synthetic clean pages so absolute axe numbers will not transfer to the literature range (h-003, h-007); H5 may contradict h-004 if axe flags positive tabindex.\n\nAPPROVAL REQUESTED from safety for Option B: read-only on data/, outputs to runs/ only, about 100 LLM API calls, no network beyond the model API, no changes to data/pages or data/defects.json. Suggested budget cap $2, abort if projected cost exceeds it.",
+ "evidence": [
+  "record/h-009.json: hypotheses H1-H7, all agent-generated and untested, confidence low",
+  "record/h-008.json: 20 pages, 40 defects, type counts; missing alt and heading order absent; --defects calls denied",
+  "data/defects.json: read in full; focus_order defects list 4 element ids each, other types list 1",
+  "data/pages/p001.html and p003.html: read; about 700 chars each, inline styles, tabindex 3/1/2 on buttons in p003, alt IMG_2041.jpg",
+  "Token counts, runtimes and prices are my assumptions, not sourced; no model price was supplied",
+  "axe rule-to-category mapping is from my background knowledge, not verified in any file"
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

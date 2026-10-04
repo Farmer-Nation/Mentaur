@@ -1,0 +1,30 @@
+{
+ "id": "h-009",
+ "time": "2026-10-03T21:02:44+00:00",
+ "from": "insight",
+ "to": "planner",
+ "type": "hypothesis",
+ "refs": [
+  "data/defects.json",
+  "data/pages/p003.html",
+  "record/h-001.json",
+  "record/h-004.json",
+  "record/h-005.json",
+  "record/h-006.json",
+  "record/h-007.json",
+  "record/h-008.json"
+ ],
+ "claim": "[AGENT-GENERATED HYPOTHESES H1-H7, untested] Scope: the five injected types in data/defects.json (40 defects on 20 synthetic pages: focus_order 10, wrong_role 9, missing_label 8, misleading_alt 7, low_contrast 6). Missing alt text and heading order are NOT in the data (h-008), so I make no claims about them. Compare axe-core with an LLM agent, scoring per-type recall against defects.json and precision on elements with no label. H1 (missing_label): axe-core recall is high (>=0.85) and the LLM does not beat it. Basis: axe is strong on syntactic, machine-checkable defects such as form labels (h-005). H2 (misleading_alt): axe-core recall is near 0 and the LLM recall is clearly higher. Basis: axe checks that alt exists, not whether it is meaningful (h-004). Page p003 has alt='IMG_2041.jpg', a filename, which axe's presence check would accept; this is my reading of the file, not a run result. H3 (wrong_role): axe-core recall is low and the LLM recall is higher. Basis: h-004 says axe misses semantic mismatches. Page p003 has <div role=link tabindex=0>Submit order</div>, which is valid ARIA but semantically odd (a submit action given the link role). Uncertainty: axe may flag some role problems through its ARIA rules, so I hold this at low confidence. H4 (low_contrast): axe-core recall is high on rendered pages; an LLM reading raw HTML has lower recall or precision, mainly near the 4.5:1 threshold. Basis: h-006 (a hypothesis, not a finding) and h-005. The page sample p003 uses inline hex colours, so an LLM could compute the ratio; the outcome depends on how close the injected colours are to the threshold. H5 (focus_order): literature predicts axe MISSES focus order (h-004: all 13 GDS tools missed it). However, p003 injects focus-order defects as out-of-order positive tabindex values (3,1,2). My unverified background knowledge is that axe has a best-practice 'tabindex' rule for tabindex>0, so axe may flag these. I propose that axe detects some focus_order defects, but only as per-element flags. Matching to defects.json, which lists groups of 4 elements, needs a stated rule. This would contradict the literature expectation if it holds. Low confidence. H6 (precision and variance): the LLM has higher recall than axe overall but lower precision, and its outputs vary between repeated runs, while axe is deterministic. Basis: h-001 (0.86 vs 0.36 recall, lower precision), h-006. Uncertainty: synthetic pages are small and clean, which may shrink false positives. H7 (complementarity): the union of axe and LLM findings beats either alone, with axe covering missing_label and low_contrast and the LLM covering misleading_alt and wrong_role. Caveats: per-type n is 6-10, so confidence intervals are wide and only large gaps are interpretable. Generator labels are not independently verified (h-008). Synthetic defects look more syntactic than real-world ones, so absolute axe numbers will not transfer to the literature's 22-57% range (h-003, h-007). Suggest reporting axe 'incomplete' results separately from violations, and fixing the LLM input (raw HTML vs rendered) before testing. No prior result is contradicted yet, so I reopen nothing; H5 is flagged as the likeliest to contradict h-004.",
+ "evidence": [
+  "data/defects.json: type counts focus_order 10, wrong_role 9, missing_label 8, misleading_alt 7, low_contrast 6 (h-008)",
+  "data/pages/p003.html: role=link div, tabindex 3/1/2 buttons, alt='IMG_2041.jpg' (my reading of one page; other pages not read)",
+  "h-001: LLM workers 0.86 vs axe 0.36 recall, lower precision (arXiv 2609.09379), med",
+  "h-004: axe misses alt meaningfulness, reading/focus order (GDS test, arXiv 2510.25964); some sources are blog or secondhand",
+  "h-005: axe strong on labels and contrast, precise",
+  "h-006: hypothesis only, no retrieved source tests it",
+  "h-007: no per-defect-type LLM vs axe breakdown found in the literature",
+  "axe 'tabindex' rule claim in H5 comes from my background knowledge; not verified in any file"
+ ],
+ "confidence": "low",
+ "label": "agent-generated"
+}

@@ -1,0 +1,22 @@
+{
+ "id": "h-006",
+ "time": "2026-10-03T21:01:33+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "hypothesis",
+ "refs": [
+  "https://arxiv.org/html/2605.27716v1",
+  "https://arxiv.org/html/2609.09379",
+  "https://arxiv.org/pdf/2606.21926"
+ ],
+ "claim": "[AGENT-GENERATED HYPOTHESIS, not established by the cited sources] LLM agents are likely to miss or mis-handle defects that need computed or rendered state. Examples are colour contrast, focus visibility, and target size. This applies most when the agent sees only raw or chunked HTML, because it lacks computed styles and layout. They are also likely to produce false positives, with run-to-run non-determinism. Suggested tests: (a) seed pages with known defects (for example via a mutation framework such as Ma11y) across syntactic, semantic, layout and keyboard categories; (b) compare per-category recall and precision of axe-core, an HTML-only LLM, and a browser-tool agent; (c) repeat runs to measure variance.",
+ "evidence": [
+  "Basis (indirect): the LLM pipeline in arXiv 2605.27716 reasons over HTML chunks while axe-core runs on the rendered page [19-1, 19-9, 19-10]",
+  "Basis (indirect): browser-tool agents reached higher recall at lower precision [23-6]",
+  "Axe's deterministic, reproducible results are contrasted with a probabilistic LLM pipeline [1-8, 19-10]",
+  "Ma11y mutation framework (Tafreshipour et al., ISSTA 2024) is cited in arXiv 2606.21926 as a possible way to inject defects [22-3:22-4]; its results were not read",
+  "No retrieved source directly tests this hypothesis"
+ ],
+ "confidence": "low",
+ "label": "agent-generated"
+}

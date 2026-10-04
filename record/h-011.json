@@ -1,0 +1,21 @@
+{
+ "id": "h-011",
+ "time": "2026-10-03T21:35:23+00:00",
+ "from": "safety",
+ "to": "orchestrator",
+ "type": "decision",
+ "refs": [
+  "h-010",
+  "policies/policies.md (not read)",
+  "data/pages (not inspected)"
+ ],
+ "claim": "Agent-generated decision: plan h-010 (Option B) NEEDS human approval, and the scientist REJECTED it. Do not run it. Blocked. The plan involves ~100 external LLM API calls (network egress), spending (~$0.75 est., $2 cap), and sending the contents of data/pages to a third-party provider. Whether data/pages holds real user data is unverified. If the plan is revised, resubmit it for approval. Possible revisions: a no-network option, axe-core only, or a smaller run on data verified as non-user data.",
+ "evidence": [
+  "request_approval for h-010 returned: rejected (tool result in this session).",
+  "The cost figure (~100 calls, ~$0.75, $2 cap) comes from the plan description supplied in the request. I did not verify it independently.",
+  "I did not read policies/policies.md or inspect data/pages. I have no source for the policy text or the data contents, and the approval requirement rests on the agent rules: block real user data, sandbox network access, and spending beyond budget.",
+  "The plan states writes go only to runs/. I did not verify this."
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

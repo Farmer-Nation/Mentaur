@@ -1,0 +1,22 @@
+{
+ "id": "h-008",
+ "time": "2026-10-03T21:01:58+00:00",
+ "from": "data",
+ "to": "safety",
+ "type": "finding",
+ "refs": [
+  "data/pages/",
+  "data/defects.json",
+  "record/schema.json"
+ ],
+ "claim": "Generated 20 synthetic pages in data/pages/ (p001..p020) with 40 labelled injected defects in data/defects.json (seed=42, rate=0.5, default defect set). Counts per type: focus_order 10, wrong_role 9, missing_label 8, misleading_alt 7, low_contrast 6. NOT covered: missing alt text (as a distinct type) and bad heading order \u2014 the generator has no such type in its default output, and my attempts to pass --defects (two value formats) were denied as 'bad argument', so I could not request them. Only missing_label and low_contrast from the requested list are present. Pages are synthetic and cleaner than real sites. (agent-generated)",
+ "evidence": [
+  "run: inject_defects --n 20 --seed 42 --rate 0.5 -> 'wrote 20 pages and 40 labelled defects (seed=42)'",
+  "data/defects.json (counts tallied by me from the file: 10+9+8+7+6=40)",
+  "inject_defects --defects 'alt,contrast,label,heading' -> 'denied: bad argument'",
+  "inject_defects --defects 'missing_alt,low_contrast,missing_label,heading_order' -> 'denied: bad argument'",
+  "No external source; ground truth is the generator's own labels, not independently verified."
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

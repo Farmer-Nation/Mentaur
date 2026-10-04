@@ -1,0 +1,352 @@
+[
+ {
+  "defect_id": "p001-d1",
+  "page_id": "p001",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p002-d1",
+  "page_id": "p002",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p003-d1",
+  "page_id": "p003",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p003-d2",
+  "page_id": "p003",
+  "type": "focus_order",
+  "element_ids": [
+   "t-3",
+   "t-4",
+   "t-5",
+   "t-6"
+  ]
+ },
+ {
+  "defect_id": "p003-d3",
+  "page_id": "p003",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p004-d1",
+  "page_id": "p004",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-5"
+  ]
+ },
+ {
+  "defect_id": "p004-d2",
+  "page_id": "p004",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p005-d1",
+  "page_id": "p005",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p005-d2",
+  "page_id": "p005",
+  "type": "focus_order",
+  "element_ids": [
+   "t-3",
+   "t-4",
+   "t-5",
+   "t-6"
+  ]
+ },
+ {
+  "defect_id": "p006-d1",
+  "page_id": "p006",
+  "type": "focus_order",
+  "element_ids": [
+   "t-1",
+   "t-2",
+   "t-3",
+   "t-4"
+  ]
+ },
+ {
+  "defect_id": "p007-d1",
+  "page_id": "p007",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p007-d2",
+  "page_id": "p007",
+  "type": "missing_label",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p007-d3",
+  "page_id": "p007",
+  "type": "focus_order",
+  "element_ids": [
+   "t-3",
+   "t-4",
+   "t-5",
+   "t-6"
+  ]
+ },
+ {
+  "defect_id": "p008-d1",
+  "page_id": "p008",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p008-d2",
+  "page_id": "p008",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-4"
+  ]
+ },
+ {
+  "defect_id": "p009-d1",
+  "page_id": "p009",
+  "type": "focus_order",
+  "element_ids": [
+   "t-2",
+   "t-3",
+   "t-4",
+   "t-5"
+  ]
+ },
+ {
+  "defect_id": "p009-d2",
+  "page_id": "p009",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p010-d1",
+  "page_id": "p010",
+  "type": "missing_label",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p010-d2",
+  "page_id": "p010",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p010-d3",
+  "page_id": "p010",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-4"
+  ]
+ },
+ {
+  "defect_id": "p011-d1",
+  "page_id": "p011",
+  "type": "missing_label",
+  "element_ids": [
+   "t-5"
+  ]
+ },
+ {
+  "defect_id": "p011-d2",
+  "page_id": "p011",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p012-d1",
+  "page_id": "p012",
+  "type": "missing_label",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p013-d1",
+  "page_id": "p013",
+  "type": "missing_label",
+  "element_ids": [
+   "t-4"
+  ]
+ },
+ {
+  "defect_id": "p014-d1",
+  "page_id": "p014",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p014-d2",
+  "page_id": "p014",
+  "type": "focus_order",
+  "element_ids": [
+   "t-2",
+   "t-3",
+   "t-4",
+   "t-5"
+  ]
+ },
+ {
+  "defect_id": "p014-d3",
+  "page_id": "p014",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p014-d4",
+  "page_id": "p014",
+  "type": "wrong_role",
+  "element_ids": [
+   "t-8"
+  ]
+ },
+ {
+  "defect_id": "p015-d1",
+  "page_id": "p015",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p016-d1",
+  "page_id": "p016",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p016-d2",
+  "page_id": "p016",
+  "type": "focus_order",
+  "element_ids": [
+   "t-3",
+   "t-4",
+   "t-5",
+   "t-6"
+  ]
+ },
+ {
+  "defect_id": "p017-d1",
+  "page_id": "p017",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-1"
+  ]
+ },
+ {
+  "defect_id": "p017-d2",
+  "page_id": "p017",
+  "type": "missing_label",
+  "element_ids": [
+   "t-3"
+  ]
+ },
+ {
+  "defect_id": "p017-d3",
+  "page_id": "p017",
+  "type": "focus_order",
+  "element_ids": [
+   "t-4",
+   "t-5",
+   "t-6",
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p018-d1",
+  "page_id": "p018",
+  "type": "missing_label",
+  "element_ids": [
+   "t-2"
+  ]
+ },
+ {
+  "defect_id": "p018-d2",
+  "page_id": "p018",
+  "type": "focus_order",
+  "element_ids": [
+   "t-3",
+   "t-4",
+   "t-5",
+   "t-6"
+  ]
+ },
+ {
+  "defect_id": "p018-d3",
+  "page_id": "p018",
+  "type": "misleading_alt",
+  "element_ids": [
+   "t-7"
+  ]
+ },
+ {
+  "defect_id": "p019-d1",
+  "page_id": "p019",
+  "type": "missing_label",
+  "element_ids": [
+   "t-3"
+  ]
+ },
+ {
+  "defect_id": "p020-d1",
+  "page_id": "p020",
+  "type": "focus_order",
+  "element_ids": [
+   "t-2",
+   "t-3",
+   "t-4",
+   "t-5"
+  ]
+ },
+ {
+  "defect_id": "p020-d2",
+  "page_id": "p020",
+  "type": "low_contrast",
+  "element_ids": [
+   "t-6"
+  ]
+ }
+]

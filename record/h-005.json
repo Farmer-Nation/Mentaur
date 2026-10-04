@@ -1,0 +1,21 @@
+{
+ "id": "h-005",
+ "time": "2026-10-03T21:01:33+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [
+  "https://pith.science/paper/2507.19549",
+  "https://rocketvalidator.com/axe-core",
+  "https://getautonoma.com/blog/automated-accessibility-testing-tools"
+ ],
+ "claim": "axe-core is strong and precise on syntactic, machine-checkable defects: missing alt attributes, colour contrast, missing form labels, invalid ARIA, missing document language, landmarks, and some structurally detectable keyboard problems. It is reported to have very low false positives because it defers uncertain cases to \"incomplete\". LLM approaches are reported to add value on semantic issues, but with lower precision. AccessGuru uses a syntactic/semantic/layout taxonomy: Axe-Playwright handles syntax and layout, and an LLM handles semantic detection. It reports up to 84% reduction in Axe-computed violation scores. That metric is itself axe-based, so it measures repair of axe-detectable violations and not detection of what axe misses.",
+ "evidence": [
+  "Rocket Validator list of axe-detectable categories: alt text, contrast, labels, language, ARIA, landmarks, skip links, target size [search idx 14-9]",
+  "Machine-checkable class and its limits [18-1, 18-2]; low false-positive claims are vendor/blog-sourced [5-5, 8-1]",
+  "AccessGuru (arXiv 2507.19549, via Pith summary): Axe-Playwright for syntax/layout plus LLM semantic detector; 84% reduction in Axe violation scores [9-1:9-3, 9-2]",
+  "Per-criterion agents had lower precision than axe-core [23-6]"
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

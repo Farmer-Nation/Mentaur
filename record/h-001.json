@@ -1,0 +1,18 @@
+{
+ "id": "h-001",
+ "time": "2026-10-03T21:01:07+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [
+  "https://arxiv.org/html/2609.09379",
+  "https://pith.science/paper/2507.19549"
+ ],
+ "claim": "Closest direct head-to-head: a per-criterion LLM worker-agent framework recovered more reference WCAG violations than axe-core, but with lower precision. Workers recovered 0.86 of positive reference labels, against 0.36 for axe-core and 0.67 for an uncued vision-language model. The evaluation used 250 page-criterion records from professional audits of scholarly platforms. Caveats: positive reference cases cover only 15 criteria, negative labels are inferred, and the authors say this limits conclusions about true accuracy. Reading (agent-generated): agentic LLMs may have higher recall and lower precision than axe-core.",
+ "evidence": [
+  "arXiv 2609.09379 (Agentic Web Accessibility Auditing: per-criterion worker agents): 0.86 vs 0.36 (axe-core) vs 0.67 (uncued VLM), lower precision [search result idx 23-5, 23-6]",
+  "Primary evaluation has positive reference cases for only 15 criteria [23-12]; inferred negatives limit conclusions [23-8]"
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

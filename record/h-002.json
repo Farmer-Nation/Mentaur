@@ -1,0 +1,17 @@
+{
+ "id": "h-002",
+ "time": "2026-10-03T21:01:07+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [
+  "https://arxiv.org/html/2605.27716v1"
+ ],
+ "claim": "The arXiv 2605.27716 study compares a deterministic axe-core pipeline against an LLM agent on HTML pages. It covers detection (RQ1), remediation (RQ2) and cost. Its stated result is that iterative agent-based remediation raises computational cost without improving repair effectiveness. In the snippets I retrieved, the per-defect-type detection numbers are not visible, so I cannot report which defect types each approach missed in that paper. Next step: read the full paper's results tables.",
+ "evidence": [
+  "arXiv 2605.27716 contributions: comparative evaluation vs Axe-Core across detection, remediation, cost; iterative agent remediation raises cost without better repair [search idx 1-3, 1-5]",
+  "Axe-Core v4.10.2 run via Playwright on rendered page; LLM analyzes HTML chunks [19-8, 19-9, 19-1]"
+ ],
+ "confidence": "low",
+ "label": "agent-generated"
+}

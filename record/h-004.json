@@ -1,0 +1,23 @@
+{
+ "id": "h-004",
+ "time": "2026-10-03T21:01:20+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [
+  "https://arxiv.org/pdf/2510.25964",
+  "https://www.mdpi.com/2306-5729/10/9/149",
+  "https://dev.to/kevinccbsg/automated-accessibility-testing-axe-core-keyboard-navigation-and-wcag-in-the-browser-2eib",
+  "https://www.resumelens.org/blog/qa-automation/accessibility-testing-axe-core"
+ ],
+ "claim": "Defect types axe-core tends to MISS are semantic or context-dependent, or depend on interaction. (1) Whether alt text is meaningful: alt=\"image\" passes the mechanical check. (2) Whether reading order and content order are correct. (3) Focus order, missing visible focus indicators, and keyboard traps or unreachable elements in interactive states. (4) Context-dependent use of colour. (5) Contrast over background images or gradients. (6) Whether custom widgets work with a screen reader. All 13 tools in the GDS test missed reading order, visible focus indicators and context-dependent colour. One small, unreviewed blog benchmark on 5 sites found axe-core alone caught 38 of 204 AA issues, with a keyboard-walk layer finding the rest; treat that as anecdotal.",
+ "evidence": [
+  "alt='image' passes the rule but may be useless [search idx 17-14]; axe cannot judge meaningfulness [18-2]",
+  "Course-systems paper (arXiv 2510.25964): axe-style tests miss correctness of alt text or reading order, and text over background images/gradients [13-2:13-4]",
+  "GDS 13-tool test: every tool missed reading order, visible focus indicators, context-dependent colour [12-16]",
+  "DEV blog (small n, 5 sites): axe-core 38/204 AA issues; keyboard layer found unreachable elements, missing focus indicators, traps, illogical focus order, missing skip-links [11-10, 11-11]",
+  "Tabular Accessibility Dataset: tools mostly detect syntactic issues and fail on semantic or context-dependent violations, esp. in JS-heavy apps [3-4]"
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

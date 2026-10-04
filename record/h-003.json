@@ -1,0 +1,23 @@
+{
+ "id": "h-003",
+ "time": "2026-10-03T21:01:20+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [
+  "https://github.com/dequelabs/axe-core",
+  "https://www.a11yflow.dev/blog/axe-vs-lighthouse-vs-wave-vs-pa11y",
+  "https://www.accessibility.works/blog/automated-wcag-testing-tools-accessibility-compliance/",
+  "https://getautonoma.com/blog/automated-accessibility-testing-tools"
+ ],
+ "claim": "axe-core has a coverage ceiling. Deque's own figure is about 57% of WCAG issues found automatically, and axe returns uncertain cases as \"incomplete\" for human review. Independent or semi-independent measurements are lower. In the UK GDS test of 13 tools on 142 known barriers, axe caught about 29% (27% in a related write-up). Evinced, a vendor with an interest, reports that axe-core found 22.6% of issues in 35 manual audits. Many of these sources are secondary or vendor-authored, so I did not verify them against the primary studies.",
+ "evidence": [
+  "axe-core GitHub README: 'on average 57% of WCAG issues' automatically; returns 'incomplete' where uncertain [search idx 15-1, 15-2]",
+  "GDS test of 13 tools on 142 barriers: axe 29%, best tool 40% (secondary source accessibility.works) [12-12:12-15]",
+  "Craig Abbott 2021: axe-core found 39 of 142 (27%) [7-3:7-4]",
+  "Evinced Jan 2026 vendor study: axe-core 22.6% vs Evinced 62.8% of manually reported issues [12-8:12-10]",
+  "18-6: the 57% figure is the vendor's estimate, not an independent audit"
+ ],
+ "confidence": "med",
+ "label": "agent-generated"
+}

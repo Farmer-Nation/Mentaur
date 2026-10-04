@@ -1,0 +1,17 @@
+{
+ "id": "h-007",
+ "time": "2026-10-03T21:01:33+00:00",
+ "from": "literature",
+ "to": "insight",
+ "type": "finding",
+ "refs": [],
+ "claim": "Evidence gaps and caveats for this literature review. It used only 3 web searches, with no OpenAlex or arXiv API queries, and I read only snippets, not full papers. I found no source reporting a per-defect-type breakdown of what LLM agents miss compared with axe-core. The only direct head-to-head found is arXiv 2609.09379, and it covers 15 criteria with inferred negatives. Most axe-core miss-rate figures come from vendor claims or blogs: the Deque 57%, the Evinced study, and the GDS and Abbott figures reported secondhand. Reported coverage varies widely, from about 22% to 57%, depending on how it is measured (issues vs criteria, page types). A systematic review of LLMs for web accessibility (arXiv 2605.13873) exists and was not read; it is worth mining next.",
+ "evidence": [
+  "Search limitations: only snippets retrieved this session",
+  "Coverage figures range 22.6% [12-9], 27-29% [7-4, 12-15], 57% [15-1]",
+  "Systematic review: arXiv 2605.13873 [25-1, 25-2]",
+  "Related Work notes that traditional tools often fail on semantic or context-dependent criteria [21-12]"
+ ],
+ "confidence": "high",
+ "label": "agent-generated"
+}
