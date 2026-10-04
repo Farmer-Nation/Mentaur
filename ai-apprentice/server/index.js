@@ -10,14 +10,15 @@ import { fileURLToPath } from 'node:url';
 import * as R from './lib/room.js';
 import { redactDeep } from './lib/redact.js';
 import { captureInvoices, teachInvoice, COST_CENTERS } from './lib/scenario.js';
-import { analyzeFrames, visionMode } from './lib/vision.js';
+import { analyzeFrame, visionMode } from './lib/vision.js';
 import { getSignedUrl, tts, voiceMode } from './lib/voice.js';
 import { reasoningMode } from './lib/reasoning.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '../web');
 const PORT = process.env.PORT || 8787;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const VISION_INTERVAL_MS = Math.max(2500, Number(process.env.VISION_INTERVAL_MS) || 4000);
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
 function send(res, code, body, headers = {}) {
   res.writeHead(code, { 'content-type': 'application/json', ...headers });
@@ -48,7 +49,7 @@ async function api(req, res, u) {
   const parts = p.split('/').filter(Boolean); // ['api','room',code,action]
 
   if (p === '/api/config' && req.method === 'GET') {
-    return send(res, 200, { visionMode, voiceMode, reasoningMode, costCenters: COST_CENTERS });
+    return send(res, 200, { visionMode, voiceMode, reasoningMode, visionIntervalMs: VISION_INTERVAL_MS, liveCadence: R.liveCadence, costCenters: COST_CENTERS });
   }
   if (p === '/api/scenario' && req.method === 'GET') {
     return send(res, 200, { capture: captureInvoices(), teach: teachInvoice(), costCenters: COST_CENTERS });
@@ -66,8 +67,8 @@ async function api(req, res, u) {
   }
   if (p === '/api/vision' && req.method === 'POST') {
     const body = await readBody(req); const room = R.getRoom(body.code);
-    const out = await analyzeFrames(body.prev, body.next);
-    if (room) { if (body.next) R.pushFrame(room, body.next); for (const ev of out.events) R.applyChange(room, parseEvent(ev)); }
+    const out = await analyzeFrame(body.next, room?.screenSummary || '');
+    if (room) R.applyVisionAnalysis(room, out);
     return send(res, 200, out);
   }
 
@@ -95,6 +96,8 @@ async function api(req, res, u) {
       case 'frame': if (body.frame) R.pushFrame(room, body.frame); return send(res, 200, { ok: true });
       case 'redact': R.setRedact(room, !!body.on); return send(res, 200, { ok: true });
       case 'speaking': R.setSpeaking(room, !!body.on); return send(res, 200, { ok: true });
+      case 'question-mode': R.setQuestionsPaused(room, !!body.paused); return send(res, 200, { ok: true, paused: room.questionsPaused });
+      case 'share-state': R.setShareState(room, body); return send(res, 200, { ok: true, shareState: room.shareState });
       case 'offrecord': R.setOffRecord(room, !!body.on); return send(res, 200, { ok: true });
       case 'debrief': R.startDebrief(room); return send(res, 200, { ok: true });
       case 'confirm': await R.confirmTeachback(room); return send(res, 200, { ok: true });
@@ -110,23 +113,11 @@ async function api(req, res, u) {
   send(res, 404, { error: 'unknown endpoint' });
 }
 
-// Map a vision-model event {text, invId} to a structured change when possible.
-function parseEvent(ev) {
-  const text = ev.text || '';
-  const invId = ev.invId || (text.match(/INV-\d+/) || [])[0];
-  let m;
-  if ((m = text.match(/cost center.*?->\s*(\w+)/i))) return { invId, trigger: 'cc', cc: m[1] };
-  if (/approved|posted/i.test(text)) return { invId, trigger: 'action', action: 'approve' };
-  if (/held|hold/i.test(text)) return { invId, trigger: 'action', action: 'hold' };
-  if (/2nd|second approval|escalat/i.test(text)) return { invId, trigger: 'action', action: 'escalate' };
-  return { invId, trigger: 'open' };
-}
-
 R.startWatcher();
 server.listen(PORT, () => {
-  console.log(`\n  The AI Apprentice`);
+  console.log(`\n  Mentaur · AI Apprentice`);
   console.log(`  ─────────────────`);
   console.log(`  http://localhost:${PORT}`);
   console.log(`  vision: ${visionMode}   voice: ${voiceMode}   reasoning: ${reasoningMode}`);
-  console.log(`  ${visionMode === 'mock' && voiceMode === 'mock' ? 'MOCK mode — no API keys needed.\n' : 'Live providers configured.\n'}`);
+  console.log(`  ${visionMode === 'mock' && voiceMode === 'local' ? 'KEYLESS mode — Claude mock + local browser TTS.\n' : 'Live provider(s) configured.\n'}`);
 });

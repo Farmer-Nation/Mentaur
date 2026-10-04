@@ -6,6 +6,7 @@ import * as planner from '../server/lib/planner.js';
 import { buildWorkMap, toAgentJSON } from '../server/lib/workmap.js';
 import { redactText } from '../server/lib/redact.js';
 import { captureInvoices, teachInvoice } from '../server/lib/scenario.js';
+import * as rooms from '../server/lib/room.js';
 
 let pass = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log('  ✓ ' + name); } catch (e) { console.error('  ✗ ' + name + '\n    ' + e.message); process.exitCode = 1; } };
@@ -49,6 +50,58 @@ t('stays quiet while typing', () => {
 t('one question at a time (pending blocks)', () => {
   const sess = { queued: { q: '?' }, speaking: false, pending: { q: 'prev' }, typing: false, lastActivity: 0 };
   assert.strictEqual(planner.shouldSpeak(sess, 999999), false);
+});
+t('question mode pause blocks a queued question', () => {
+  const sess = { queued: { q: '?' }, speaking: false, pending: null, typing: false, questionsPaused: true, lastActivity: 0 };
+  assert.strictEqual(planner.shouldSpeak(sess, 999999), false);
+});
+t('periodic idle prompt uses the shorter live-share quiet gap', () => {
+  const sess = { queued: { q: '?', source: 'idle' }, speaking: false, pending: null, typing: false, lastActivity: 0 };
+  assert.strictEqual(planner.shouldSpeak(sess, planner.constants.IDLE_PROMPT_PAUSE_MS + 25), true);
+});
+
+console.log('\nlive vision room state');
+t('Claude activity summaries are persisted as chat and suggestions keep three prompts', () => {
+  const code = rooms.createRoom(); const room = rooms.getRoom(code);
+  rooms.applyVisionAnalysis(room, {
+    summary: 'Browser | Reviewing a pricing page | Comparing plan limits',
+    activitySummary: 'The guide is comparing plan limits before choosing an option.',
+    events: [],
+    studentQuestions: ['Why this plan?', 'What limit matters most?', 'What would change your choice?'],
+    question: { q: 'What limit matters most to this choice?', key: 'plan-limit', guardrail: false },
+  });
+  assert.strictEqual(room.chat.at(-1).from, 'activity');
+  assert.match(room.chat.at(-1).text, /comparing plan limits/i);
+  assert.strictEqual(room.suggestions.length, 3);
+  assert.strictEqual(room.queued, null); // ordinary observation waits for the idle cadence
+});
+t('activity summaries are capped at one per minute', () => {
+  assert.ok(rooms.liveCadence.SUMMARY_MIN_MS >= 60000);
+  const code = rooms.createRoom(); const room = rooms.getRoom(code);
+  rooms.applyVisionAnalysis(room, { activitySummary: 'First live activity summary.' });
+  rooms.applyVisionAnalysis(room, { activitySummary: 'A different summary a few seconds later.' });
+  assert.strictEqual(room.chat.filter((m) => m.from === 'activity').length, 1);
+});
+t('idle questions stay eligible on arbitrary shared tabs without demo events', () => {
+  const code = rooms.createRoom(); const room = rooms.getRoom(code);
+  room.shareState = { sharing: true, paused: false };
+  room.latestFrame = 'data:image/jpeg;base64,shared-tab-frame';
+  const at = Math.max(rooms.liveCadence.IDLE_QUESTION_MS, rooms.liveCadence.IDLE_QUESTION_COOLDOWN_MS) + 1;
+  assert.strictEqual(rooms.shouldQueueIdleQuestion(room, at), true);
+  room.questionsPaused = true;
+  assert.strictEqual(rooms.shouldQueueIdleQuestion(room, at), false);
+});
+t('high-value vision questions can still queue immediately and pause clears them', () => {
+  const code = rooms.createRoom(); const room = rooms.getRoom(code);
+  rooms.applyVisionAnalysis(room, {
+    summary: 'ERP | Approval warning visible | Reviewing an exception', activitySummary: '',
+    events: [{ text: 'Approval warning is visible', kind: 'warning', importance: 'high' }],
+    studentQuestions: [],
+    question: { q: 'When would you stop instead of approving this?', key: 'approval-warning', guardrail: true },
+  });
+  assert.ok(room.queued && room.queued.source === 'vision');
+  rooms.setShareState(room, { sharing: true, paused: true });
+  assert.strictEqual(room.queued, null);
 });
 
 console.log('\nplanner — understanding + debrief');

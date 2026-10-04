@@ -10,6 +10,7 @@
 // mock pipeline and the vision pipeline.
 
 const PAUSE_MS = 2200; // silence/no-activity window that counts as "a pause"
+const IDLE_PROMPT_PAUSE_MS = 900; // quiet gap for periodic learner prompts during an active share
 
 // Produce a candidate question for an on-screen event, or null.
 // `inv` is the invoice after the change. `trigger` is 'cc' | 'action'.
@@ -47,10 +48,12 @@ function key(inv, suffix, q, guardrail, stepKey) {
 // moment to release a queued question?
 export function shouldSpeak(sess, nowMs) {
   if (!sess.queued) return false;
+  if (sess.questionsPaused) return false;
   if (sess.speaking) return false;
   if (sess.pending) return false; // one question at a time
   if (sess.typing) return false; // stay quiet while they type
-  return nowMs - sess.lastActivity >= PAUSE_MS;
+  const pauseMs = sess.queued?.source === 'idle' ? IDLE_PROMPT_PAUSE_MS : PAUSE_MS;
+  return nowMs - sess.lastActivity >= pauseMs;
 }
 
 // Debrief: everything the agent still lacks a reason or a guardrail for.
@@ -112,4 +115,4 @@ export function evaluateTeachDecision(teachInv, chosen) {
     scoreNote: 'Coded straight to capex (0400) — guardrail respected.' };
 }
 
-export const constants = { PAUSE_MS };
+export const constants = { PAUSE_MS, IDLE_PROMPT_PAUSE_MS };

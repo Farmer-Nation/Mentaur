@@ -1,16 +1,14 @@
 // Voice adapter for ElevenLabs.
-//   - getSignedUrl(): mints a signed URL so the browser can open a realtime
-//     ElevenAgents conversation (interviewer / tutor voice) without exposing the
-//     API key. Requires ELEVENLABS_API_KEY + ELEVENLABS_AGENT_ID.
-//   - tts(): server-side text-to-speech, returns audio bytes.
-// In MOCK mode both are disabled and the browser uses the Web Speech API.
+// ElevenLabs TTS is preferred whenever an API key is configured. The browser
+// automatically falls back to local Web Speech if this endpoint is unavailable
+// or generation/playback fails.
 
 const KEY = process.env.ELEVENLABS_API_KEY;
 const AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'; // default sample voice
-const TTS_MODEL = process.env.ELEVENLABS_TTS_MODEL || 'eleven_turbo_v2_5';
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
+const TTS_MODEL = process.env.ELEVENLABS_TTS_MODEL || 'eleven_flash_v2_5';
 
-export const voiceMode = KEY && AGENT_ID ? 'elevenlabs' : KEY ? 'tts-only' : 'mock';
+export const voiceMode = KEY ? (AGENT_ID ? 'elevenlabs' : 'elevenlabs-tts') : 'local';
 
 export async function getSignedUrl() {
   if (!KEY || !AGENT_ID) return null;
@@ -23,15 +21,23 @@ export async function getSignedUrl() {
   return data.signed_url;
 }
 
-// Returns a Buffer of MP3 audio, or null in mock mode.
+// Returns a Buffer of MP3 audio, or null when ElevenLabs is unavailable.
 export async function tts(text) {
-  if (!KEY) return null;
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
-    method: 'POST',
-    headers: { 'xi-api-key': KEY, 'content-type': 'application/json', accept: 'audio/mpeg' },
-    body: JSON.stringify({ text, model_id: TTS_MODEL, voice_settings: { stability: 0.4, similarity_boost: 0.8 } }),
-  });
-  if (!r.ok) throw new Error('tts failed: ' + r.status);
-  const buf = Buffer.from(await r.arrayBuffer());
-  return buf;
+  if (!KEY || !text) return null;
+  try {
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_22050_32`, {
+      method: 'POST',
+      headers: { 'xi-api-key': KEY, 'content-type': 'application/json', accept: 'audio/mpeg' },
+      body: JSON.stringify({
+        text: String(text).slice(0, 1200),
+        model_id: TTS_MODEL,
+        voice_settings: { stability: 0.4, similarity_boost: 0.8 },
+      }),
+    });
+    if (!r.ok) throw new Error('tts failed: ' + r.status);
+    return Buffer.from(await r.arrayBuffer());
+  } catch (e) {
+    console.warn('[voice] ElevenLabs unavailable; client will use local TTS:', e.message);
+    return null;
+  }
 }

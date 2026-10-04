@@ -1,4 +1,4 @@
-// The AI Apprentice — room client (role-aware).
+// Mentaur — AI Apprentice room client (role-aware).
 // The same file renders the Guide view and the Student view; the brain and all
 // sync run on the server. Both roles can answer/ask by voice or text.
 
@@ -14,8 +14,10 @@ const isGuide = ROLE === 'guide';
 const S = {
   started: Date.now(), phase: 'capture', invoices: [], selected: null,
   costCenters: [], config: null, pending: null, redact: false, offRecord: false,
-  speaking: false, micOn: false, recog: null, curriculum: null, workMap: [],
-  teach: null, prevFrame: null, shareStream: null,
+  speaking: false, micOn: false, recog: null, recogActive: false, micArmTimer: null,
+  voiceAnswerSubmitted: false, micBlocked: false, curriculum: null, workMap: [],
+  teach: null, shareStream: null, sharePaused: false, questionsPaused: false, sharing: false,
+  lastVisualFingerprint: null, visionDirty: false, lastVisionSentAt: 0,
 };
 
 /* ---------- clock ---------- */
@@ -23,24 +25,85 @@ setInterval(() => { $('#sessionClock').textContent = fmt(Date.now() - S.started)
 function fmt(ms) { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
 
 /* ---------- voice ---------- */
+function localSpeak(text) {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) return setTimeout(resolve, 500 + text.length * 16);
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text.replace(/<[^>]+>/g, ''));
+      u.rate = 1.02; u.onend = resolve; u.onerror = resolve; speechSynthesis.speak(u);
+    } catch { resolve(); }
+  });
+}
 async function speak(text) {
   if (!$('#ttsToggle').checked) return;
   if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: true }); S.speaking = true; }
   setOrb('speaking'); setStatus('Speaking…');
-  const done = async () => { if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: false }); S.speaking = false; } setOrb('listening'); setStatus(idleText()); };
-  if (S.config && S.config.voiceMode !== 'mock') {
-    try { const r = await fetch('/api/voice/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
-      if (r.headers.get('content-type')?.includes('audio')) { const a = new Audio(URL.createObjectURL(await r.blob())); a.onended = done; a.play(); return; } } catch {}
+  try {
+    // Prefer ElevenLabs whenever configured. Wait for playback to actually finish
+    // before returning so the microphone never starts underneath Mentaur's voice.
+    if (S.config && S.config.voiceMode.startsWith('elevenlabs')) {
+      try {
+        const r = await fetch('/api/voice/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+        if (r.ok && r.headers.get('content-type')?.includes('audio')) {
+          const url = URL.createObjectURL(await r.blob());
+          const a = new Audio(url);
+          const played = await new Promise((resolve) => {
+            let settled = false;
+            const finish = (ok) => { if (settled) return; settled = true; URL.revokeObjectURL(url); resolve(ok); };
+            a.onended = () => finish(true);
+            a.onerror = () => finish(false);
+            a.play().catch(() => finish(false));
+          });
+          if (played) return;
+        }
+      } catch { /* use local TTS below */ }
+    }
+    await localSpeak(text);
+  } finally {
+    if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: false }); S.speaking = false; }
+    setOrb('listening'); setStatus(idleText());
   }
-  if (!('speechSynthesis' in window)) return setTimeout(done, 500 + text.length * 16);
-  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text.replace(/<[^>]+>/g, '')); u.rate = 1.02; u.onend = done; u.onerror = done; speechSynthesis.speak(u); } catch { done(); }
 }
 function initMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
   const r = new SR(); r.lang = 'en-US'; r.interimResults = false;
-  r.onresult = (e) => { $('#replyBox').value = e.results[0][0].transcript; submitReply(); };
+  r.onstart = () => { S.recogActive = true; };
+  r.onresult = (e) => {
+    S.voiceAnswerSubmitted = true;
+    $('#replyBox').value = e.results[0][0].transcript;
+    submitReply();
+  };
+  r.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      S.micBlocked = true;
+      toast('Microphone permission is blocked in the browser.');
+    }
+  };
+  r.onend = () => {
+    S.recogActive = false;
+    // SpeechRecognition is one-shot in Chromium. If the AI question is still
+    // awaiting an answer, automatically re-arm instead of silently going dead.
+    if (isGuide && S.micOn && S.pending && !S.speaking && !S.voiceAnswerSubmitted && !S.micBlocked) {
+      armMic({ requirePending: true, delay: 220 });
+    }
+  };
   return r;
+}
+
+function armMic({ requirePending = false, delay = 0 } = {}) {
+  clearTimeout(S.micArmTimer);
+  S.micArmTimer = setTimeout(() => {
+    if (!S.micOn || !S.recog || S.recogActive || S.speaking || S.micBlocked) return;
+    if (requirePending && (!S.pending || S.voiceAnswerSubmitted)) return;
+    try { S.recog.start(); }
+    catch {
+      // A recognizer can remain in its stopping state briefly. Retry only while
+      // a still-unanswered AI question requires the microphone.
+      if (requirePending && S.micOn && S.pending && !S.voiceAnswerSubmitted) armMic({ requirePending: true, delay: 250 });
+    }
+  }, delay);
 }
 
 /* ---------- orb/status/toast ---------- */
@@ -48,7 +111,10 @@ function setOrb(m) { $('#orb').className = 'orb ' + m; }
 function setStatus(t) { $('#statusline').textContent = t; }
 function idleText() {
   if (S.phase === 'practice') return 'Coaching — I’ll step in before a mistake';
-  if (isGuide) return S.pending ? 'Waiting for your answer…' : 'Listening — I’ll ask only at a pause';
+  if (isGuide) {
+    if (S.questionsPaused) return 'Question mode paused';
+    return S.pending ? 'Waiting for your answer…' : 'Listening — I’ll ask only at a pause';
+  }
   return 'Watching the guide — ask anytime';
 }
 function toast(msg, kind) { const t = $('#toast'); t.innerHTML = msg; t.className = 'toast show' + (kind ? ' ' + kind : ''); clearTimeout(t._tm); t._tm = setTimeout(() => (t.className = 'toast'), 2600); }
@@ -61,7 +127,7 @@ function redact(t) {
 }
 function addMsg(role, text, opts = {}) {
   const tr = $('#transcript'); const m = el('div', 'msg ' + role);
-  if (role !== 'event') m.appendChild(el('div', 'lbl', opts.lbl || (role === 'agent' ? 'Apprentice' : role === 'guide' ? 'Guide' : role === 'student' ? 'Student' : 'Session')));
+  if (role !== 'event') m.appendChild(el('div', 'lbl', opts.lbl || (role === 'agent' ? 'Mentaur' : role === 'guide' ? 'Guide' : role === 'student' ? 'Student' : 'Session')));
   m.appendChild(el('div', 'bubble', redact(text) + (opts.guardrail ? ' <span class="guardtag">GUARDRAIL</span>' : '')));
   tr.appendChild(m); tr.scrollTop = tr.scrollHeight; return m;
 }
@@ -93,6 +159,8 @@ function connect() {
       case 'practice_catch': onPracticeCatch(d); break;
       case 'practice_done': onPracticeDone(d); break;
       case 'redact': break;
+      case 'question_mode': onQuestionMode(d.paused); break;
+      case 'share_state': onShareState(d); break;
     }
   };
 }
@@ -100,15 +168,28 @@ function onEvent(d) {
   addMsg('event', '▸ ' + fmt(d.event.t) + '  ' + d.event.text);
   if (d.invoices) { S.invoices = d.invoices; if (S.phase === 'capture') renderQueue(); if (S.selected) renderEditor(); }
 }
-function onAsk(d) {
+async function onAsk(d) {
   S.pending = d;
-  if (isGuide) { addMsg('agent', d.question, { guardrail: d.guardrail }); speak(d.question); setStatus('Waiting for your answer…'); if (S.micOn && S.recog) { try { S.recog.start(); } catch {} } }
+  S.voiceAnswerSubmitted = false;
+  if (isGuide) {
+    addMsg('agent', d.question, { guardrail: d.guardrail });
+    await speak(d.question);
+    setStatus('Waiting for your answer…');
+    if (S.micOn && S.recog && S.pending === d) armMic({ requirePending: true });
+  }
   else { addMsg('agent', d.question, { guardrail: d.guardrail, lbl: 'Apprentice → Guide' }); }
 }
-function onAck(d) { if (isGuide) addMsg('agent', d.guardrail ? 'Got it — I’ll treat that as a guardrail.' : 'Thanks, that’s the reasoning I needed.'); S.pending = null; renderCoverage(d.coverage); }
+function onAck(d) { if (isGuide) addMsg('agent', d.guardrail ? 'Got it — I’ll treat that as a guardrail.' : 'Thanks, that’s the reasoning I needed.'); S.pending = null; S.voiceAnswerSubmitted = false; renderCoverage(d.coverage); }
 function onChat(msg) {
   if (msg.from === 'guide') addMsg('guide', msg.text);
-  else if (msg.from === 'student') { addMsg('student', msg.text); if (isGuide) { toast('Student asked a question'); } }
+  else if (msg.from === 'student') {
+    addMsg('student', msg.text);
+    if (isGuide) {
+      toast('Student asked a question');
+      if (S.micOn && S.recog && !S.speaking) armMic();
+    }
+  }
+  else if (msg.from === 'activity') addMsg('activity', msg.text, { lbl: 'Live activity · Claude' });
   else addMsg('agent', msg.text);
 }
 
@@ -121,23 +202,27 @@ async function boot() {
   $('#modePill').textContent = `${S.config.visionMode}/${S.config.voiceMode}`;
   $('#roomCode').textContent = CODE;
   $('#roomCode').onclick = () => { navigator.clipboard?.writeText(`${location.origin}/room.html?code=${CODE}&role=student`); toast('Student invite link copied'); };
-  $('#roleSub').textContent = isGuide ? 'You are the Guide — do the task, I’ll learn it' : 'You are the Student — follow along and ask';
+  $('#roleSub').textContent = isGuide ? 'Guide · Mentaur is learning from you' : 'Student · Mentaur is coaching you';
   $('#agentName').textContent = 'Apprentice';
+  $('#replyBox').placeholder = isGuide ? 'Answer Mentaur or add context…' : 'Ask Mentaur or the Guide…';
   S.recog = initMic();
 
   const view = await api(`/api/room/${CODE}`);
   if (view.error) { $('#surface').innerHTML = `<div class="intro"><h3>Room not found</h3><p>The code <b>${CODE}</b> isn’t active. <a href="/">Go back</a> and check it.</p></div>`; return; }
   S.invoices = view.invoices; S.phase = view.phase; S.curriculum = view.curriculum; S.workMap = view.workMap;
+  S.questionsPaused = !!view.controls?.questionsPaused; S.sharePaused = !!view.controls?.shareState?.paused; S.sharing = !!view.controls?.shareState?.sharing;
   renderPresence(view.presence);
   connect();
 
   if (S.phase === 'curriculum' || S.phase === 'practice') renderCurriculum();
   else if (isGuide) renderGuideCapture();
   else renderStudentLive();
+  if (S.phase === 'capture') onShareState(view.controls?.shareState || { sharing: false, paused: false });
   setOrb('listening'); setStatus(idleText());
   // replay recent transcript for late joiners
   view.chat.forEach(onChat);
   renderSuggestions(view.suggestions);
+  if (!isGuide && view.latestFrame) onFrame(view.latestFrame);
 }
 
 /* ============================================================
@@ -146,15 +231,21 @@ async function boot() {
 function renderGuideCapture() {
   S.phase = 'capture'; setPhase('capture');
   const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Live session</h2><div class="lead">Do the task the way you really would. I’ll stay quiet while you work and ask <b>why</b> only at a pause. A student is following along.</div></div><span class="pill" id="progressPill">0 / 3</span>`));
+  s.appendChild(el('div', 'surface-head', `<div><h2>Capture the real workflow</h2><div class="lead">Work the way you normally would. Mentaur watches quietly, records live activity, and asks grounded questions so the judgment behind each step is not lost.</div></div><span class="pill" id="progressPill">0 of 3 processed</span>`));
+  const preview = el('section', 'guide-share-preview hidden'); preview.id = 'guideSharePreview';
+  preview.innerHTML = `<div class="guide-preview-head"><div><b>Your shared screen</b><span>Live preview of exactly what Mentaur is observing.</span></div><span class="pill live" id="guidePreviewPill">● sharing</span></div><div class="mirror guide-mirror"><video id="shareVid" muted autoplay playsinline></video><div class="mirror-state hidden" id="guideMirrorState"></div></div>`;
+  s.appendChild(preview);
   const erp = el('div', 'erp');
-  erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Sandbox ERP · Accounts Payable <span class="tag">month-end close</span>`));
+  erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Sandbox workspace · Accounts Payable <span class="tag">capture mode</span>`));
   const q = el('div', 'queue'); q.id = 'queue'; erp.appendChild(q); s.appendChild(erp);
   s.appendChild(Object.assign(el('div'), { id: 'editorMount' }));
   const sb = el('div', 'sharebar');
-  sb.innerHTML = `<button class="btn ghost" id="shareBtn">▣ Share real screen</button><video id="shareVid" class="hidden" muted autoplay playsinline></video><span class="hint">Optional: share your real screen and (in vision mode) a model turns frames into events the student sees. Otherwise this sandbox is the task.</span>`;
+  sb.innerHTML = `<div class="share-controls"><button class="btn ghost" id="shareBtn">▣ Share real screen</button><button class="btn ghost" id="sharePauseBtn" disabled>⏸ Pause share</button><button class="btn ghost" id="questionModeBtn">❚❚ Pause questions</button></div><span class="hint">Share any work screen. Mentaur analyzes changed frames with Claude, logs concise activity summaries in chat, refreshes learner prompts live, and can ask a spoken question after learner silence. Use fake/sandbox data for the demo.</span>`;
   s.appendChild(sb);
   $('#shareBtn').onclick = shareScreen;
+  $('#sharePauseBtn').onclick = toggleSharePause;
+  $('#questionModeBtn').onclick = toggleQuestionMode;
+  renderCaptureControls();
   renderQueue(); $('#coverageBox').style.display = 'block'; renderCoverage([]);
   addMsg('system', 'Session started. Work normally — I’m watching.');
   reportActivity(false);
@@ -170,7 +261,7 @@ function renderQueue() {
     q.appendChild(row);
   });
   const done = S.invoices.filter((i) => i.action).length;
-  $('#progressPill') && ($('#progressPill').textContent = `${done} / 3`);
+  $('#progressPill') && ($('#progressPill').textContent = `${done} of 3 processed`);
 }
 function selectInvoice(id) { S.selected = id; reportActivity(false); api(`/api/room/${CODE}/change`, { invId: id, trigger: 'open' }); renderQueue(); renderEditor(); }
 function renderEditor() {
@@ -200,27 +291,136 @@ function renderEditor() {
 }
 async function doAction(inv, action) { inv.action = action; const v = await api(`/api/room/${CODE}/change`, { invId: inv.id, trigger: 'action', action }); S.invoices = v.invoices; renderQueue(); renderEditor(); renderCoverage(v.coverage); }
 
-/* screen share + vision */
+/* screen share + Claude vision */
+function renderCaptureControls() {
+  const p = $('#sharePauseBtn');
+  if (p) {
+    p.disabled = !S.shareStream;
+    p.textContent = S.sharePaused ? '▶ Resume share' : '⏸ Pause share';
+    p.classList.toggle('control-active', S.sharePaused);
+  }
+  const q = $('#questionModeBtn');
+  if (q) {
+    q.textContent = S.questionsPaused ? '▶ Resume questions' : '❚❚ Pause questions';
+    q.classList.toggle('control-active', S.questionsPaused);
+  }
+}
+
+async function toggleQuestionMode() {
+  S.questionsPaused = !S.questionsPaused;
+  renderCaptureControls(); setStatus(idleText());
+  await api(`/api/room/${CODE}/question-mode`, { paused: S.questionsPaused });
+  toast(S.questionsPaused ? 'Question mode paused' : 'Question mode resumed');
+}
+
+function onQuestionMode(paused) {
+  S.questionsPaused = !!paused;
+  renderCaptureControls(); setStatus(idleText());
+}
+
+async function toggleSharePause() {
+  if (!S.shareStream) return;
+  S.sharePaused = !S.sharePaused;
+  renderCaptureControls();
+  await api(`/api/room/${CODE}/share-state`, { sharing: true, paused: S.sharePaused });
+  toast(S.sharePaused ? 'Screen sharing paused in Mentaur' : 'Screen sharing resumed');
+}
+
+function onShareState(d) {
+  S.sharing = d.sharing !== false; S.sharePaused = !!d.paused;
+  if (isGuide) {
+    renderCaptureControls();
+    const state = $('#guideMirrorState');
+    const pill = $('#guidePreviewPill');
+    if (state) {
+      state.textContent = d.sharing === false ? 'Screen share stopped' : d.paused ? 'Mentaur relay + analysis paused' : '';
+      state.classList.toggle('hidden', d.sharing !== false && !d.paused);
+    }
+    if (pill) pill.textContent = d.paused ? '● paused' : '● sharing';
+  }
+  const badge = $('#mirrorState');
+  if (badge) {
+    badge.textContent = d.sharing === false ? 'Screen share stopped' : d.paused ? 'Screen share paused' : '';
+    badge.classList.toggle('hidden', d.sharing !== false && !d.paused);
+  }
+}
+
 async function shareScreen() {
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    S.shareStream = stream; const v = $('#shareVid'); v.classList.remove('hidden'); v.srcObject = stream; $('#shareBtn').textContent = '▣ Sharing';
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    S.shareStream = stream; S.sharing = true; S.sharePaused = false; S.lastVisualFingerprint = null; S.visionDirty = true; S.lastVisionSentAt = 0;
+    const v = $('#shareVid'); v.srcObject = stream;
+    $('#guideSharePreview')?.classList.remove('hidden');
+    try { await v.play(); } catch {}
+    $('#shareBtn').textContent = '▣ Sharing'; $('#shareBtn').disabled = true;
+    renderCaptureControls();
+    await api(`/api/room/${CODE}/share-state`, { sharing: true, paused: false });
     startFrameLoop(v);
-    stream.getVideoTracks()[0].addEventListener('ended', () => { v.classList.add('hidden'); $('#shareBtn').textContent = '▣ Share real screen'; });
+    stream.getVideoTracks()[0].addEventListener('ended', async () => {
+      S.shareStream = null; S.sharing = false; S.sharePaused = false; S.lastVisualFingerprint = null; S.visionDirty = false;
+      v.srcObject = null; $('#guideSharePreview')?.classList.add('hidden');
+      $('#shareBtn').textContent = '▣ Share real screen'; $('#shareBtn').disabled = false;
+      renderCaptureControls();
+      await api(`/api/room/${CODE}/share-state`, { sharing: false, paused: false });
+    });
   } catch { toast('Screen share cancelled.'); }
 }
+
+function fingerprint(video, canvas) {
+  canvas.width = 32; canvas.height = 18;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, 32, 18);
+  const data = ctx.getImageData(0, 0, 32, 18).data;
+  const fp = new Uint8Array(32 * 18);
+  for (let i = 0, j = 0; i < data.length; i += 4, j++) fp[j] = Math.round((data[i] + data[i + 1] + data[i + 2]) / 3);
+  return fp;
+}
+function fingerprintDelta(a, b) {
+  if (!a || !b || a.length !== b.length) return 1;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / (a.length * 255);
+}
+function captureFrame(video, canvas) {
+  const srcW = video.videoWidth || 1280, srcH = video.videoHeight || 720;
+  const w = Math.min(720, srcW), h = Math.max(1, Math.round((srcH / srcW) * w));
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.46);
+}
+
 function startFrameLoop(video) {
-  const canvas = document.createElement('canvas');
-  const grab = () => {
+  const probe = document.createElement('canvas');
+  const frameCanvas = document.createElement('canvas');
+  const tick = async () => {
     if (!S.shareStream || !S.shareStream.active) return;
-    const w = 960, h = Math.round((video.videoHeight / video.videoWidth) * 960) || 540;
-    canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-    const next = canvas.toDataURL('image/jpeg', 0.6);
-    if (S.config.visionMode !== 'mock') api('/api/vision', { code: CODE, prev: S.prevFrame, next });
-    else api(`/api/room/${CODE}/frame`, { frame: next }); // relay to student even in mock
-    S.prevFrame = next; setTimeout(grab, 1800);
+    if (S.sharePaused || video.readyState < 2 || !video.videoWidth) return setTimeout(tick, 1500);
+
+    const fp = fingerprint(video, probe);
+    const delta = fingerprintDelta(S.lastVisualFingerprint, fp);
+    const changed = !S.lastVisualFingerprint || delta >= 0.035;
+    S.lastVisualFingerprint = fp;
+
+    if (changed) {
+      S.visionDirty = true;
+      // This cheap activity ping is what keeps Mentaur quiet while the shared
+      // screen is actively changing, even when Claude calls are throttled.
+      reportActivity(false);
+      const relay = captureFrame(video, frameCanvas);
+      api(`/api/room/${CODE}/frame`, { frame: relay });
+    }
+
+    const interval = Number(S.config?.visionIntervalMs) || 4000;
+    if (S.config?.visionMode !== 'mock' && S.visionDirty && Date.now() - S.lastVisionSentAt >= interval) {
+      const next = captureFrame(video, frameCanvas);
+      S.visionDirty = false; S.lastVisionSentAt = Date.now();
+      api('/api/vision', { code: CODE, next }).then((out) => {
+        if (out?.error) console.warn('Vision analysis skipped:', out.error);
+      }).catch(() => { S.visionDirty = true; });
+    }
+    setTimeout(tick, 1500);
   };
-  setTimeout(grab, 1000);
+  setTimeout(tick, 700);
 }
 
 /* ============================================================
@@ -229,11 +429,11 @@ function startFrameLoop(video) {
 function renderStudentLive() {
   S.phase = 'capture'; setPhase('capture');
   const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Watching the guide</h2><div class="lead">This updates live as the guide works. Ask anything by voice or text — or tap a suggested question on the right.</div></div><span class="pill live">● live</span>`));
+  s.appendChild(el('div', 'surface-head', `<div><h2>Follow the work live</h2><div class="lead">Watch the Guide’s decisions unfold in real time. Ask by voice or text, or use a suggested question when you want more context.</div></div><span class="pill live">● live</span>`));
   const frame = el('div', 'mirror'); frame.id = 'mirror';
-  frame.innerHTML = `<img id="mirrorImg" class="hidden" alt="guide screen"><div class="mirror-empty" id="mirrorEmpty">The guide’s screen appears here when they share it.</div>`;
+  frame.innerHTML = `<img id="mirrorImg" class="hidden" alt="guide screen"><div class="mirror-empty" id="mirrorEmpty">The guide’s screen appears here when they share it.</div><div class="mirror-state hidden" id="mirrorState"></div>`;
   s.appendChild(frame);
-  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Guide’s workspace (mirror) <span class="tag">read-only</span>`));
+  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Guide workspace <span class="tag">live mirror</span>`));
   const q = el('div', 'queue'); q.id = 'queue'; erp.appendChild(q); s.appendChild(erp);
   renderQueue();
   $('#suggestions').style.display = 'block';
@@ -261,25 +461,25 @@ function renderCoverage(items) {
 
 /* ---------- debrief / teachback (guide) ---------- */
 function offerDebrief() {
-  addMsg('agent', 'All three are processed. Ready for a quick debrief to close the gaps?');
-  speak('All three are processed. Ready for a quick debrief?');
-  const bar = el('div'); bar.style.marginTop = '16px'; bar.innerHTML = `<button class="btn primary" id="startDebrief">Start debrief →</button>`;
+  addMsg('agent', 'Capture complete. Ready for a quick debrief to close the remaining knowledge gaps?');
+  speak('Capture complete. Ready for a quick debrief?');
+  const bar = el('div'); bar.style.marginTop = '16px'; bar.innerHTML = `<button class="btn primary" id="startDebrief">Map the workflow →</button>`;
   $('#surface').appendChild(bar);
   $('#startDebrief').onclick = async () => { $('#startDebrief').remove(); await api(`/api/room/${CODE}/debrief`, {}); };
 }
 function startTeachback(steps) {
   S.phase = 'teachback';
   const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', "<div><h2>Teach-back</h2><div class='lead'>Here’s your process in my words. Confirm it and I’ll build the curriculum for the student.</div></div>"));
+  s.appendChild(el('div', 'surface-head', "<div><h2>Confirm the Work Map</h2><div class='lead'>Mentaur has reconstructed the workflow from the screen events and your explanations. Confirm it before it becomes the Student’s playbook.</div></div>"));
   const lines = steps.map((st, i) => `${i + 1}. ${st.title}: ${st.decision} — because “${st.reason}”. Guardrail: ${st.guardrail}`);
   const card = el('div', 'intro');
-  card.innerHTML = `<h3>This is how I understand it</h3><ol>${lines.map((l) => `<li>${redact(l)}</li>`).join('')}</ol><button class="btn primary" id="confirmTB">✓ Yes — build the curriculum</button>`;
+  card.innerHTML = `<h3>What Mentaur learned</h3><ol>${lines.map((l) => `<li>${redact(l)}</li>`).join('')}</ol><button class="btn primary" id="confirmTB">✓ Confirm & build the playbook</button>`;
   s.appendChild(card);
   addMsg('agent', 'I’ll explain it back — confirm on the left.');
   speak('Here’s how I understand your process. ' + lines.join('. '));
   $('#confirmTB').onclick = async () => { addMsg('guide', 'Yes, that’s how it works.'); await api(`/api/room/${CODE}/confirm`, {}); };
 }
-function waitForCurriculum() { const s = $('#surface'); s.innerHTML = `<div class="intro"><h3>Building your curriculum…</h3><p>The guide is confirming the process. This page will update automatically.</p></div>`; }
+function waitForCurriculum() { const s = $('#surface'); s.innerHTML = `<div class="intro"><h3>Building the shared playbook…</h3><p>The Guide is confirming the Work Map. This page updates automatically when it is ready.</p></div>`; }
 
 /* ---------- curriculum (both) ---------- */
 function onCurriculum(d) { S.curriculum = d.curriculum; S.workMap = d.workMap; renderCurriculum(); }
@@ -288,7 +488,7 @@ async function renderCurriculum() {
   setPhase('curriculum');
   if (!S.curriculum) { const d = await api(`/api/room/${CODE}/curriculum`); S.curriculum = d.curriculum; S.workMap = d.workMap; }
   const c = S.curriculum; const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>${c.title}</h2><div class="lead">${redact(c.summary)}</div></div><a class="btn" href="/api/room/${CODE}/export" download>⤓ Agent-ready JSON</a>`));
+  s.appendChild(el('div', 'surface-head', `<div><h2>${c.title}</h2><div class="lead">${redact(c.summary)}</div></div><a class="btn" href="/api/room/${CODE}/export" download>↓ Export agent JSON</a>`));
   const list = el('div', 'lessons');
   c.lessons.forEach((L) => {
     const card = el('div', 'lesson');
@@ -301,12 +501,12 @@ async function renderCurriculum() {
   });
   s.appendChild(list);
   const cta = el('div'); cta.style.marginTop = '18px';
-  if (!isGuide) cta.innerHTML = `<button class="btn primary big" id="startPractice">Practice this now →</button>`;
+  if (!isGuide) cta.innerHTML = `<button class="btn primary big" id="startPractice">Start coached practice →</button>`;
   else cta.innerHTML = `<div class="hint" style="color:var(--muted)">The student can now practice. You’ll see their result here.</div>`;
   s.appendChild(cta);
   $('#suggestions').style.display = 'none'; $('#coverageBox').style.display = 'none';
   if (!isGuide) $('#startPractice').onclick = startPractice;
-  addMsg('agent', isGuide ? 'Curriculum is ready and shared with the student.' : 'Curriculum ready. Practice when you like — I’ll coach you as your guide would.');
+  addMsg('agent', isGuide ? 'The Work Map is ready and shared with the Student.' : 'The Work Map is ready. Start practice when you’re ready — I’ll coach you using the Guide’s reasoning.');
 }
 
 /* ---------- practice (student) ---------- */
@@ -314,8 +514,8 @@ async function startPractice() {
   const p = await api(`/api/room/${CODE}/practice`, { studentId: 's' });
   S.teach = p; S.phase = 'practice'; setPhase('practice');
   const inv = p.inv; const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Practice</h2><div class='lead'>A case your guide never showed you. I’ll step in <b>before</b> a guardrail is broken, using their reasoning.</div></div><span class="pill">new case</span>`));
-  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Your workspace <span class="tag">coached</span>`)); s.appendChild(erp);
+  s.appendChild(el('div', 'surface-head', `<div><h2>Practice the judgment</h2><div class='lead'>This is a case your Guide never showed you. Mentaur will stay out of the way unless you’re about to cross a <b>guardrail</b>.</div></div><span class="pill">unseen case</span>`));
+  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Practice workspace <span class="tag">Mentaur coaching</span>`)); s.appendChild(erp);
   s.appendChild(Object.assign(el('div'), { id: 'teachMount', style: 'margin-top:16px' }));
   renderPracticeEditor();
   addMsg('agent', `New case: ${inv.id}, ${redact(inv.supplier)}, ${redact('€' + inv.amount.toLocaleString('de-DE'))}. I’ll let you drive.`);
@@ -348,7 +548,7 @@ function onPracticeCatch(d) {
 function onPracticeDone(d) {
   if (isGuide) { addMsg('agent', 'The student finished the practice case.'); return; }
   const s = $('#surface'); const card = el('div', 'scorecard');
-  card.innerHTML = `<h3>What you’ve mastered — and what to practice</h3>${d.score.map((x) => `<div class="scorerow"><span class="ic ${x.ok ? 'ok' : 'miss'}">${x.ok ? '✓' : '!'}</span><div class="t"><b>${x.label}</b><div>${x.note}</div></div></div>`).join('')}<div style="margin-top:16px;display:flex;gap:10px"><button class="btn" id="againBtn">↺ Try again</button><button class="btn ghost" id="backCur">← Curriculum</button></div>`;
+  card.innerHTML = `<h3>Your mastery snapshot</h3>${d.score.map((x) => `<div class="scorerow"><span class="ic ${x.ok ? 'ok' : 'miss'}">${x.ok ? '✓' : '!'}</span><div class="t"><b>${x.label}</b><div>${x.note}</div></div></div>`).join('')}<div style="margin-top:16px;display:flex;gap:10px"><button class="btn" id="againBtn">↺ Try again</button><button class="btn ghost" id="backCur">← Work Map</button></div>`;
   s.appendChild(card);
   $('#againBtn').onclick = startPractice; $('#backCur').onclick = renderCurriculum;
   const allOk = d.score.every((x) => x.ok);
@@ -369,8 +569,28 @@ async function submitReply() {
 }
 $('#sendBtn').onclick = submitReply;
 $('#replyBox').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } });
-$('#replyBox').addEventListener('input', () => reportActivity(true));
-$('#micToggle').addEventListener('change', (e) => { S.micOn = e.target.checked; if (S.micOn && !S.recog) S.recog = initMic(); if (S.micOn && !S.recog) { toast('Voice input needs Chrome — use text.'); e.target.checked = false; S.micOn = false; return; } if (S.micOn && S.recog) { try { S.recog.start(); } catch {} } });
+$('#replyBox').addEventListener('input', (e) => {
+  reportActivity(true);
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px';
+});
+$('#micToggle').addEventListener('change', (e) => {
+  S.micOn = e.target.checked;
+  S.micBlocked = false;
+  if (S.micOn && !S.recog) S.recog = initMic();
+  if (S.micOn && !S.recog) {
+    toast('Voice input needs Chrome — use text.'); e.target.checked = false; S.micOn = false; return;
+  }
+  if (!S.micOn) {
+    clearTimeout(S.micArmTimer);
+    try { if (S.recogActive) S.recog.abort(); } catch {}
+    return;
+  }
+  S.voiceAnswerSubmitted = false;
+  // If a question is already pending, keep listening until it is answered.
+  // Otherwise preserve the existing one-shot voice-entry behavior.
+  armMic({ requirePending: !!(isGuide && S.pending) });
+});
 $('#redactToggle').addEventListener('change', async (e) => { S.redact = e.target.checked; await api(`/api/room/${CODE}/redact`, { on: S.redact }); toast(S.redact ? 'Redaction on' : 'Redaction off'); if ($('#queue')) renderQueue(); });
 $('#offRecBtn').addEventListener('click', () => { S.offRecord = !S.offRecord; $('#offRecBtn').classList.toggle('on', S.offRecord); toast(S.offRecord ? 'Next answer off the record' : 'Back on the record'); });
 

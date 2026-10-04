@@ -9,7 +9,7 @@ import { buildWorkMap } from './workmap.js';
 import { teachInvoice } from './scenario.js';
 
 const KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.REASONING_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.REASONING_MODEL || 'claude-haiku-4-5';
 export const reasoningMode = KEY ? 'claude' : 'mock';
 
 async function claude(system, user, maxTokens = 500) {
@@ -29,13 +29,16 @@ function parseJSON(text, fallback) {
 function recentContext(room) {
   const lastEvents = room.events.slice(-8).map((e) => e.text);
   const answered = room.qa.map((x) => `Q:${x.q} A:${x.a}`);
-  return { lastEvents, answered };
+  const screenSummary = String(room.screenSummary || '').trim();
+  return { lastEvents, answered, screenSummary };
 }
 
 // The single best question to ask the GUIDE right now about a visible change,
 // or null. `cand` is the deterministic trigger from the planner.
 export async function phraseGuideQuestion(room, cand) {
   if (!cand) return null;
+  // Claude vision already phrased arbitrary-screen questions in the same paid call.
+  if (cand.source === 'vision' || cand.phrased) return cand;
   if (reasoningMode === 'mock') return cand;
   const { lastEvents, answered } = recentContext(room);
   const sys = `You are a patient apprentice learning a workflow by watching an expert work.
@@ -52,13 +55,14 @@ the expert is experienced and busy. Return JSON: {"q":"...","guardrail":true|fal
 export async function studentSuggestions(room) {
   const last = room.events[room.events.length - 1];
   if (reasoningMode === 'mock') return mockSuggestions(room, last);
-  const { lastEvents, answered } = recentContext(room);
+  const { lastEvents, answered, screenSummary } = recentContext(room);
   const sys = `You help a new hire watch an expert work. Suggest 2-3 SHORT questions
 (max 12 words each) the new hire could ask the expert to understand the reasoning or the
-rules — the kind a beginner wouldn't think to ask. Avoid questions already answered.
+rules — the kind a beginner wouldn't think to ask. Ground them in the latest visible screen
+state even if the expert is in an arbitrary browser tab or desktop app. Avoid questions already answered.
 Return JSON: {"questions":["...","..."]}.`;
-  const usr = `Recent screen events:\n${lastEvents.join('\n')}\nAlready answered:\n${answered.join('\n') || '(none)'}`;
-  const out = parseJSON(await claude(sys, usr, 200), null);
+  const usr = `Current screen state:\n${screenSummary || '(not yet summarized)'}\nRecent screen events:\n${lastEvents.join('\n') || '(none)'}\nAlready answered:\n${answered.join('\n') || '(none)'}`;
+  const out = parseJSON(await claude(sys, usr, 220), null);
   const qs = out && Array.isArray(out.questions) ? out.questions : null;
   return qs ? qs.slice(0, 3).map((q) => ({ q })) : mockSuggestions(room, last);
 }
@@ -73,6 +77,44 @@ function mockSuggestions(room, last) {
   // de-dup against answered
   const asked = new Set(room.qa.map((x) => x.q));
   return out.filter((x) => !asked.has(x.q)).slice(0, 3);
+}
+
+
+// When the Student has been quiet for a while during a live share, generate one
+// lightweight spoken question for the Guide. This text-only Claude call uses the
+// latest compact vision state, so it works across arbitrary tabs without sending
+// another screenshot. The browser voices the resulting question with ElevenLabs.
+export async function idleGuideQuestion(room) {
+  const { lastEvents, answered, screenSummary } = recentContext(room);
+  const hasSharedFrame = !!room.latestFrame;
+  if (!screenSummary && !lastEvents.length && !hasSharedFrame) return null;
+  if (reasoningMode === 'mock' || (!screenSummary && !lastEvents.length)) {
+    const n = room.qa.filter((x) => x.stepKey === 'screen_idle').length;
+    const prompts = [
+      'What are you looking for on this screen before you make your next move?',
+      'What would make you choose a different next step here?',
+      'What is the main signal on this screen that a new hire might miss?',
+    ];
+    return {
+      key: `idle:visible-work:${n}`,
+      q: prompts[n % prompts.length],
+      guardrail: false, stepKey: 'screen_idle', invId: null, source: 'idle', phrased: true,
+    };
+  }
+  const sys = `You are an AI apprentice watching an expert's shared screen. The learner has been quiet.
+Ask ONE natural spoken question (max 18 words) that helps expose the expert's intent, reasoning,
+selection criteria, or a guardrail behind what is currently visible. The shared content may be any
+browser tab or desktop app. Do not ask for a fact already visible on screen and do not mention secrets.
+Avoid repeating prior questions. Return JSON: {"q":"...","guardrail":true|false,"key":"short-key"}.`;
+  const usr = `Current screen state:\n${screenSummary || '(no compact state)'}\nRecent visible activity:\n${lastEvents.join('\n') || '(none)'}\nPrior questions/answers:\n${answered.slice(-8).join('\n') || '(none)'}`;
+  const out = parseJSON(await claude(sys, usr, 220), null);
+  if (!out || typeof out.q !== 'string' || !out.q.trim()) return null;
+  const q = out.q.trim().slice(0, 220);
+  const keyText = String(out.key || q.toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 90);
+  return {
+    key: `idle:${keyText}`, q, guardrail: !!out.guardrail, stepKey: 'screen_idle',
+    invId: null, source: 'idle', phrased: true,
+  };
 }
 
 // Build the shared curriculum from the locked Work Map.

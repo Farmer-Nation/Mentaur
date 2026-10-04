@@ -1,6 +1,8 @@
-import pkg from '/home/claude/.npm-global/lib/node_modules/playwright/index.js';
-const { chromium } = pkg;
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+import { chromium } from 'playwright';
+const launchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+  : {};
+const b = await chromium.launch(launchOptions);
 const errs = [];
 const mkpage = async (ctx, tag) => { const p = await ctx.newPage(); p.on('pageerror', e => errs.push(tag+':'+e.message)); p.on('console', m => { if (m.type()==='error' && !/403|Failed to load resource/.test(m.text())) errs.push(tag+'console:'+m.text()); }); return p; };
 

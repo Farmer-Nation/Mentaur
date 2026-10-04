@@ -9,10 +9,17 @@ import crypto from 'node:crypto';
 import { captureInvoices, teachInvoice } from './scenario.js';
 import * as planner from './planner.js';
 import { buildWorkMap, toAgentJSON } from './workmap.js';
-import { phraseGuideQuestion, studentSuggestions, buildCurriculum, practiceFeedback } from './reasoning.js';
+import { phraseGuideQuestion, studentSuggestions, idleGuideQuestion, buildCurriculum, practiceFeedback } from './reasoning.js';
 
 const rooms = new Map(); // code -> room
 const subs = new Map(); // code -> Set<{res, role, id}>
+
+// Chat activity summaries are intentionally sparse. Vision can analyze much more
+// often, but the transcript should receive at most one summary per minute.
+const SUMMARY_MIN_MS = Math.max(60000, Number(process.env.ACTIVITY_SUMMARY_INTERVAL_MS) || 60000);
+const SUGGESTION_REFRESH_MS = Math.max(3000, Number(process.env.SUGGESTION_REFRESH_MS) || 6000);
+const IDLE_QUESTION_MS = Math.max(8000, Number(process.env.IDLE_QUESTION_MS) || 15000);
+const IDLE_QUESTION_COOLDOWN_MS = Math.max(8000, Number(process.env.IDLE_QUESTION_COOLDOWN_MS) || 18000);
 
 function code4() {
   const s = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -30,6 +37,10 @@ export function createRoom() {
     lastActivity: 0, typing: false, speaking: false,
     debriefQ: null, debriefIdx: -1,
     practice: {}, latestFrame: null, redact: false,
+    screenSummary: '', lastVisionQuestion: null, lastActivitySummary: '', lastSummaryAt: -Infinity,
+    questionsPaused: false, shareState: { sharing: false, paused: false },
+    lastStudentQuestionAt: 0, lastQuestionAt: 0, lastQuestionAttemptAt: 0,
+    lastSuggestionsAt: -Infinity, suggestionsBusy: false, idleQuestionBusy: false,
     guidePresent: false, students: 0,
   };
   rooms.set(code, room);
@@ -43,6 +54,8 @@ export function roomView(room) {
     events: room.events, qa: room.qa, chat: room.chat,
     suggestions: room.suggestions, coverage: planner.coverage(room.invoices, room.qa),
     workMap: room.workMap, curriculum: room.curriculum, redact: room.redact,
+    controls: { questionsPaused: room.questionsPaused, shareState: room.shareState },
+    latestFrame: room.latestFrame,
     presence: { guide: room.guidePresent, students: room.students },
   };
 }
@@ -74,8 +87,8 @@ export function reportActivity(room, { typing } = {}) {
   room.lastActivity = now(room);
   if (typeof typing === 'boolean') room.typing = typing;
 }
-function pushEvent(room, text) {
-  const ev = { t: now(room), text };
+function pushEvent(room, text, meta = {}) {
+  const ev = { t: now(room), text, ...meta };
   room.events.push(ev);
   broadcast(room, { type: 'event', event: ev, invoices: room.invoices });
 }
@@ -103,6 +116,73 @@ export function pushFrame(room, dataUrl) {
   broadcast(room, { type: 'frame', frame: dataUrl }, 'student');
 }
 
+function recordActivitySummary(room, text) {
+  const summary = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 260);
+  if (!summary) return;
+  const at = now(room);
+  const same = summary.toLowerCase() === String(room.lastActivitySummary || '').toLowerCase();
+  if (same || at - room.lastSummaryAt < SUMMARY_MIN_MS) return;
+  room.lastActivitySummary = summary; room.lastSummaryAt = at;
+  const msg = { from: 'activity', text: summary, t: at, source: 'vision' };
+  room.chat.push(msg);
+  broadcast(room, { type: 'chat', msg });
+}
+
+// Apply one Claude screen analysis without assuming any particular application.
+// Vision-originated questions are already phrased by Claude, so they bypass a
+// second LLM call in the watcher.
+export function applyVisionAnalysis(room, analysis = {}) {
+  if (analysis.summary) room.screenSummary = analysis.summary;
+  if (analysis.activitySummary) recordActivitySummary(room, analysis.activitySummary);
+  for (const ev of analysis.events || []) {
+    const text = String(ev.text || '').trim();
+    if (!text) continue;
+    const prev = room.events[room.events.length - 1];
+    if (prev && prev.text === text && now(room) - prev.t < 12000) continue;
+    pushEvent(room, text, { source: 'vision', kind: ev.kind || 'other', importance: ev.importance || 'medium' });
+  }
+  if ((analysis.events || []).length) reportActivity(room, { typing: false });
+
+  if (Array.isArray(analysis.studentQuestions) && analysis.studentQuestions.length) {
+    room.suggestions = analysis.studentQuestions.slice(0, 3).map((q) => ({ q }));
+    room.lastSuggestionsAt = now(room);
+    broadcast(room, { type: 'suggestions', suggestions: room.suggestions }, 'student');
+  }
+
+  const q = analysis.question;
+  if (q && q.q) {
+    const key = 'vision:' + (q.key || q.q.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 80));
+    room.lastVisionQuestion = {
+      key, q: q.q, guardrail: !!q.guardrail, stepKey: 'screen_observation',
+      invId: null, source: 'vision', phrased: true, at: now(room),
+    };
+    const urgentVisibleMoment = !!q.guardrail || (analysis.events || []).some((e) =>
+      e && (e.importance === 'high' || ['decision', 'warning', 'submission'].includes(e.kind)));
+    if (urgentVisibleMoment && !room.pending && !room.queued && !room.questionsPaused && !room.askedKeys.has(key)) {
+      room.queued = { ...room.lastVisionQuestion };
+    }
+  }
+}
+
+export function setQuestionsPaused(room, paused) {
+  room.questionsPaused = !!paused;
+  if (room.questionsPaused) room.queued = null;
+  else if (!room.pending && !room.queued && room.lastVisionQuestion && now(room) - room.lastVisionQuestion.at < 30000 && !room.askedKeys.has(room.lastVisionQuestion.key)) {
+    room.queued = { ...room.lastVisionQuestion };
+    room.lastActivity = now(room); // resume, then wait for a natural pause before speaking
+  }
+  broadcast(room, { type: 'question_mode', paused: room.questionsPaused });
+}
+
+export function setShareState(room, state = {}) {
+  room.shareState = {
+    sharing: typeof state.sharing === 'boolean' ? state.sharing : room.shareState.sharing,
+    paused: typeof state.paused === 'boolean' ? state.paused : room.shareState.paused,
+  };
+  if ((!room.shareState.sharing || room.shareState.paused) && ['vision', 'idle'].includes(room.queued?.source)) room.queued = null;
+  broadcast(room, { type: 'share_state', ...room.shareState });
+}
+
 function queueGuideQuestion(room, trigger, inv) {
   if (room.pending || room.queued) return;
   const cand = planner.questionFor(trigger, inv);
@@ -111,10 +191,14 @@ function queueGuideQuestion(room, trigger, inv) {
 }
 
 async function refreshSuggestions(room) {
+  if (room.suggestionsBusy) return;
+  room.suggestionsBusy = true;
+  room.lastSuggestionsAt = now(room);
   try {
     room.suggestions = await studentSuggestions(room);
     broadcast(room, { type: 'suggestions', suggestions: room.suggestions }, 'student');
   } catch { /* keep previous */ }
+  finally { room.suggestionsBusy = false; }
 }
 
 // ---- chat: either side can speak/type ----
@@ -125,6 +209,7 @@ export function postChat(room, { from, text, to }) {
 
   if (from === 'student') {
     // a student question for the guide; also captured as a clarification
+    room.lastStudentQuestionAt = now(room);
     room.qa.push({ q: `(student) ${text}`, a: null, invId: null, stepKey: 'student_q', guardrail: false, t: now(room) });
     refreshSuggestions(room);
     return;
@@ -213,19 +298,61 @@ export async function practiceAttempt(room, { studentId = 's', cc, action }) {
   return { outcome: 'done', score: p.score };
 }
 
-// ---- background watcher: paces the AI's questions ----
+// ---- background watcher: paces the AI's questions + live learner prompts ----
+function shouldRefreshSuggestions(room, at) {
+  return room.shareState.sharing && !room.shareState.paused && room.students > 0 &&
+    !room.suggestionsBusy && at - room.lastSuggestionsAt >= SUGGESTION_REFRESH_MS &&
+    !!(room.screenSummary || room.events.length);
+}
+
+export function shouldQueueIdleQuestion(room, at) {
+  if (!room.shareState.sharing || room.shareState.paused || room.questionsPaused) return false;
+  if (room.pending || room.queued || room.speaking || room.typing || room.idleQuestionBusy) return false;
+  // A live shared frame is enough to keep the occasional-question cadence alive.
+  // This matters in mock/keyless mode and during transient vision failures, where
+  // arbitrary tabs may have a frame but no Claude summary/events yet.
+  if (!room.latestFrame && !room.screenSummary && !room.events.length) return false;
+  const lastLearnerQuestion = room.lastStudentQuestionAt || 0;
+  const lastAnyQuestion = room.lastQuestionAt || 0;
+  if (at - lastLearnerQuestion < IDLE_QUESTION_MS) return false;
+  if (at - lastAnyQuestion < IDLE_QUESTION_COOLDOWN_MS) return false;
+  if (at - room.lastQuestionAttemptAt < IDLE_QUESTION_MS) return false;
+  return true;
+}
+
+async function queueIdleQuestion(room, at) {
+  room.idleQuestionBusy = true; room.lastQuestionAttemptAt = at;
+  try {
+    let cand = room.lastVisionQuestion && at - room.lastVisionQuestion.at <= IDLE_QUESTION_MS
+      ? { ...room.lastVisionQuestion, source: 'idle' }
+      : null;
+    if (!cand || room.askedKeys.has(cand.key)) cand = await idleGuideQuestion(room);
+    if (!cand || room.pending || room.queued || room.questionsPaused || room.askedKeys.has(cand.key)) return;
+    room.queued = { ...cand, source: 'idle', queuedAt: now(room) };
+  } catch { /* try again after the next idle interval */ }
+  finally { room.idleQuestionBusy = false; }
+}
+
 let loop = false;
 export function startWatcher() {
   if (loop) return; loop = true;
   setInterval(async () => {
     for (const room of rooms.values()) {
       if (!['capture'].includes(room.phase)) continue;
-      if (planner.shouldSpeak(room, now(room))) {
+      const at = now(room);
+
+      if (shouldRefreshSuggestions(room, at)) refreshSuggestions(room);
+      if (shouldQueueIdleQuestion(room, at)) queueIdleQuestion(room, at);
+
+      if (planner.shouldSpeak(room, at)) {
         const cand = room.queued; room.queued = null;
         const phrased = await phraseGuideQuestion(room, cand).catch(() => cand);
-        room.pending = phrased; room.askedKeys.add(cand.key);
+        if (!phrased || !phrased.q) continue;
+        room.pending = phrased; room.askedKeys.add(cand.key); room.lastQuestionAt = now(room);
         broadcast(room, { type: 'ask', question: phrased.q, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId });
       }
     }
   }, 400);
 }
+
+export const liveCadence = { SUMMARY_MIN_MS, SUGGESTION_REFRESH_MS, IDLE_QUESTION_MS, IDLE_QUESTION_COOLDOWN_MS };
