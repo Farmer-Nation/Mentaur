@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The AI Apprentice — Room</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127891;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <h1>The AI Apprentice</h1>
+        <div class="sub" id="roleSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="phases" id="phases">
+      <div class="phase active" data-phase="capture"><span class="n">1</span>Live session</div>
+      <div class="phase" data-phase="curriculum"><span class="n">2</span>Curriculum</div>
+      <div class="phase" data-phase="practice"><span class="n">3</span>Practice</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="presence" id="presence" title="Who's in the room"></span>
+    <span class="pill roomcode" id="roomCode" title="Share this code">&middot;&middot;&middot;&middot;&middot;</span>
+    <span class="pill" id="modePill">mock</span>
+    <div class="clock mono" id="sessionClock">00:00</div>
+  </div>
+
+  <div class="main">
+    <div class="surface" id="surface"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="title">
+          <div class="orb quiet" id="orb"></div>
+          <div>
+            <h3 id="agentName">Apprentice</h3>
+            <div class="statusline" id="statusline">Connecting…</div>
+          </div>
+        </div>
+      </div>
+      <div class="transcript" id="transcript"></div>
+
+      <div class="suggestions" id="suggestions" style="display:none">
+        <div class="cap">Not sure what to ask? Tap one</div>
+        <div id="suggestList"></div>
+      </div>
+      <div class="coverage" id="coverageBox" style="display:none">
+        <div class="cap">What the apprentice still needs</div>
+        <div id="coverageList"></div>
+      </div>
+
+      <div class="composer">
+        <div class="tools">
+          <label class="toolchip"><input type="checkbox" id="micToggle"> &#127908; Voice</label>
+          <label class="toolchip"><input type="checkbox" id="ttsToggle" checked> &#128266; Speak</label>
+          <label class="toolchip rec"><input type="checkbox" id="redactToggle"> &#128737; Redact</label>
+        </div>
+        <div class="row">
+          <textarea id="replyBox" placeholder="Type to reply or ask…"></textarea>
+          <button class="iconbtn" id="offRecBtn" title="Take the next answer off the record">&#128683;</button>
+          <button class="iconbtn send" id="sendBtn" title="Send">&#10148;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

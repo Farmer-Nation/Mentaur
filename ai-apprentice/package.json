@@ -1,0 +1,15 @@
+{
+  "name": "ai-apprentice",
+  "version": "0.1.0",
+  "description": "A background voice agent that captures an expert's judgment while they work, maps it into a clickable Work Map, and teaches it to the next hire. Hack-Nation x ElevenLabs — The AI Apprentice.",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/run.mjs"
+  },
+  "keywords": ["voice-agent", "elevenlabs", "knowledge-capture", "apprentice", "hackathon"],
+  "license": "MIT",
+  "dependencies": {}
+}

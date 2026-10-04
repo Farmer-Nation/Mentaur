@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The AI Apprentice</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127891;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="landing">
+<div class="land-wrap">
+  <div class="land-brand">
+    <div class="logo big"></div>
+    <h1>The AI Apprentice</h1>
+    <p class="tag">Capture an expert's judgment live &middot; follow along in real time &middot; practice after.</p>
+  </div>
+  <div class="land-cards">
+    <div class="land-card guide">
+      <div class="role-eyebrow">You know the work</div>
+      <h2>Start as the Guide</h2>
+      <p>Share your screen and do a real task. The apprentice watches, asks why at the right moments, and a learner follows along live.</p>
+      <button class="btn primary big" id="startGuide">Open a room &rarr;</button>
+    </div>
+    <div class="land-card student">
+      <div class="role-eyebrow">You're learning</div>
+      <h2>Join as the Student</h2>
+      <p>Watch the guide work in real time, ask questions by voice or text, and get a curriculum to practice afterwards.</p>
+      <div class="join-row">
+        <input type="text" id="joinCode" placeholder="ROOM CODE" maxlength="5" autocomplete="off" spellcheck="false">
+        <button class="btn big" id="joinStudent">Join &rarr;</button>
+      </div>
+    </div>
+  </div>
+  <div class="land-foot mono" id="modeFoot">checking providers&hellip;</div>
+</div>
+<script type="module">
+  const cfg = await fetch('/api/config').then(r => r.json());
+  document.getElementById('modeFoot').textContent =
+    `vision: ${cfg.visionMode} · voice: ${cfg.voiceMode} · reasoning: ${cfg.reasoningMode}` +
+    (cfg.visionMode === 'mock' && cfg.voiceMode === 'mock' ? '  —  running keyless (mock)' : '');
+  document.getElementById('startGuide').onclick = async () => {
+    const { code } = await fetch('/api/room', { method: 'POST' }).then(r => r.json());
+    location.href = `/room.html?code=${code}&role=guide`;
+  };
+  const join = () => {
+    const code = document.getElementById('joinCode').value.trim().toUpperCase();
+    if (code) location.href = `/room.html?code=${code}&role=student`;
+  };
+  document.getElementById('joinStudent').onclick = join;
+  document.getElementById('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+  document.getElementById('joinCode').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+</script>
+</body>
+</html>
