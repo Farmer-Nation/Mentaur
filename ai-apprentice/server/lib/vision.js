@@ -39,7 +39,7 @@ Question rules:
 - Otherwise ask a lightweight intent/process question about what the expert is visibly doing or looking for.
 - The question MUST be grounded in something visible now and must not ask for a fact the screen already answers.
 - Prefer WHY / WHAT WOULD CHANGE THIS / WHAT ARE YOU LOOKING FOR / WHEN WOULD YOU STOP questions.
-- At least sometimes surface a guardrail when the screen supports one.
+- When useful, surface a clear "when to stop" or ask-for-help condition supported by the screen.
 - Keep activity_summary factual and non-sensitive. Keep events to 0-3 and student_questions to 0-3. Be concise to minimize tokens.`;
 
 function parseJSON(text) {

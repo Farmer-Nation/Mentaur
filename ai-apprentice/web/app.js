@@ -14,10 +14,12 @@ const isGuide = ROLE === 'guide';
 const S = {
   started: Date.now(), phase: 'capture', invoices: [], selected: null,
   costCenters: [], config: null, pending: null, redact: false, offRecord: false,
-  speaking: false, micOn: false, recog: null, recogActive: false, micArmTimer: null,
-  voiceAnswerSubmitted: false, micBlocked: false, curriculum: null, workMap: [],
-  teach: null, shareStream: null, sharePaused: false, questionsPaused: false, sharing: false,
+  speaking: false, micOn: false, recog: null, recogActive: false, micEnding: false,
+  micBlocked: false, micDraft: '', voiceAnswerSubmitted: false,
+  curriculum: null, workMap: [],
+  teach: null, practiceStarted: false, shareStream: null, sharePaused: false, questionsPaused: false, sharing: false,
   lastVisualFingerprint: null, visionDirty: false, lastVisionSentAt: 0,
+  activeAudio: null, speechToken: 0,
 };
 
 /* ---------- clock ---------- */
@@ -37,6 +39,8 @@ function localSpeak(text) {
 }
 async function speak(text) {
   if (!$('#ttsToggle').checked) return;
+  stopSpeech({ announce: false });
+  const token = ++S.speechToken;
   if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: true }); S.speaking = true; }
   setOrb('speaking'); setStatus('Speaking…');
   try {
@@ -45,35 +49,78 @@ async function speak(text) {
     if (S.config && S.config.voiceMode.startsWith('elevenlabs')) {
       try {
         const r = await fetch('/api/voice/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+        if (token !== S.speechToken) return;
         if (r.ok && r.headers.get('content-type')?.includes('audio')) {
           const url = URL.createObjectURL(await r.blob());
+          if (token !== S.speechToken) { URL.revokeObjectURL(url); return; }
           const a = new Audio(url);
           const played = await new Promise((resolve) => {
             let settled = false;
             const finish = (ok) => { if (settled) return; settled = true; URL.revokeObjectURL(url); resolve(ok); };
             a.onended = () => finish(true);
             a.onerror = () => finish(false);
+            S.activeAudio = { audio: a, finish };
             a.play().catch(() => finish(false));
           });
+          if (S.activeAudio?.audio === a) S.activeAudio = null;
           if (played) return;
         }
       } catch { /* use local TTS below */ }
     }
+    if (token !== S.speechToken) return;
     await localSpeak(text);
   } finally {
-    if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: false }); S.speaking = false; }
-    setOrb('listening'); setStatus(idleText());
+    if (token === S.speechToken) {
+      if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: false }); S.speaking = false; }
+      setOrb('listening'); setStatus(idleText());
+    }
   }
+}
+function stopSpeech({ announce = true } = {}) {
+  S.speechToken++;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (S.activeAudio) {
+    const current = S.activeAudio;
+    S.activeAudio = null;
+    current.audio.pause();
+    current.finish(false);
+  }
+  if (isGuide && S.speaking) {
+    S.speaking = false;
+    api(`/api/room/${CODE}/speaking`, { on: false });
+  }
+  if (announce) {
+    setOrb('listening'); setStatus(idleText());
+    toast('Okay — I stopped speaking.');
+  }
+}
+function isStopPhrase(text) {
+  const normalized = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return /\b(thank|thanks)\s+(you\s+)?(mentaur|mentor|mental|manta|man\s*tour)\b/.test(normalized);
 }
 function initMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
-  const r = new SR(); r.lang = 'en-US'; r.interimResults = false;
+  const r = new SR(); r.lang = 'en-US'; r.interimResults = true; r.continuous = false;
   r.onstart = () => { S.recogActive = true; };
   r.onresult = (e) => {
-    S.voiceAnswerSubmitted = true;
-    $('#replyBox').value = e.results[0][0].transcript;
-    submitReply();
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const transcript = e.results[i][0].transcript.trim();
+      if (e.results[i].isFinal) S.micDraft = `${S.micDraft} ${transcript}`.trim();
+      else interim += ` ${transcript}`;
+    }
+    const heard = `${S.micDraft} ${interim}`.trim();
+    if (!heard) return;
+    if (isStopPhrase(heard)) {
+      stopSpeech();
+      S.micDraft = '';
+      S.micEnding = false;
+      stopMicCapture();
+      return;
+    }
+    $('#replyBox').value = heard;
+    api(`/api/room/${CODE}/activity`, { typing: true });
   };
   r.onerror = (e) => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -83,27 +130,41 @@ function initMic() {
   };
   r.onend = () => {
     S.recogActive = false;
-    // SpeechRecognition is one-shot in Chromium. If the AI question is still
-    // awaiting an answer, automatically re-arm instead of silently going dead.
-    if (isGuide && S.micOn && S.pending && !S.speaking && !S.voiceAnswerSubmitted && !S.micBlocked) {
-      armMic({ requirePending: true, delay: 220 });
+    if (S.micEnding) {
+      S.micEnding = false;
+      const text = S.micDraft.trim();
+      S.micDraft = '';
+      if (text) {
+        S.voiceAnswerSubmitted = true;
+        $('#replyBox').value = text;
+        submitReply();
+      }
+    } else if (S.micOn && !S.micBlocked) {
+      try { S.recog.start(); } catch { /* retry on the next hold */ }
     }
   };
   return r;
 }
 
-function armMic({ requirePending = false, delay = 0 } = {}) {
-  clearTimeout(S.micArmTimer);
-  S.micArmTimer = setTimeout(() => {
-    if (!S.micOn || !S.recog || S.recogActive || S.speaking || S.micBlocked) return;
-    if (requirePending && (!S.pending || S.voiceAnswerSubmitted)) return;
-    try { S.recog.start(); }
-    catch {
-      // A recognizer can remain in its stopping state briefly. Retry only while
-      // a still-unanswered AI question requires the microphone.
-      if (requirePending && S.micOn && S.pending && !S.voiceAnswerSubmitted) armMic({ requirePending: true, delay: 250 });
-    }
-  }, delay);
+function startMicCapture() {
+  if (!S.recog || S.recogActive || S.micBlocked) return;
+  S.micOn = true;
+  S.micEnding = false;
+  S.micDraft = '';
+  $('#pushToTalk').classList.add('active');
+  setStatus('Listening to your voice…');
+  api(`/api/room/${CODE}/activity`, { typing: true });
+  try { S.recog.start(); } catch { /* browser is still starting/stopping */ }
+}
+function stopMicCapture() {
+  if (!S.micOn) return;
+  S.micOn = false;
+  $('#pushToTalk').classList.remove('active');
+  api(`/api/room/${CODE}/activity`, { typing: false });
+  if (S.recogActive) {
+    S.micEnding = true;
+    try { S.recog.stop(); } catch { S.micEnding = false; }
+  }
 }
 
 /* ---------- orb/status/toast ---------- */
@@ -128,7 +189,7 @@ function redact(t) {
 function addMsg(role, text, opts = {}) {
   const tr = $('#transcript'); const m = el('div', 'msg ' + role);
   if (role !== 'event') m.appendChild(el('div', 'lbl', opts.lbl || (role === 'agent' ? 'Mentaur' : role === 'guide' ? 'Guide' : role === 'student' ? 'Student' : 'Session')));
-  m.appendChild(el('div', 'bubble', redact(text) + (opts.guardrail ? ' <span class="guardtag">GUARDRAIL</span>' : '')));
+  m.appendChild(el('div', 'bubble', redact(text) + (opts.guardrail ? ' <span class="guardtag">WHEN TO STOP</span>' : '')));
   tr.appendChild(m); tr.scrollTop = tr.scrollHeight; return m;
 }
 
@@ -169,28 +230,41 @@ function onEvent(d) {
   if (d.invoices) { S.invoices = d.invoices; if (S.phase === 'capture') renderQueue(); if (S.selected) renderEditor(); }
 }
 async function onAsk(d) {
-  S.pending = d;
-  S.voiceAnswerSubmitted = false;
+  if (d.repeat && S.pending && S.pending.question === d.question) {
+    addMsg('agent', `I’m still waiting — ${d.question}`, { guardrail: d.guardrail });
+  } else {
+    S.pending = d;
+    S.voiceAnswerSubmitted = false;
+    if (isGuide) addMsg('agent', d.question, { guardrail: d.guardrail });
+  }
   if (isGuide) {
-    addMsg('agent', d.question, { guardrail: d.guardrail });
-    await speak(d.question);
+    await speak(d.repeat ? `I’m still waiting for your answer. ${d.question}` : d.question);
     setStatus('Waiting for your answer…');
-    if (S.micOn && S.recog && S.pending === d) armMic({ requirePending: true });
   }
   else { addMsg('agent', d.question, { guardrail: d.guardrail, lbl: 'Apprentice → Guide' }); }
 }
-function onAck(d) { if (isGuide) addMsg('agent', d.guardrail ? 'Got it — I’ll treat that as a guardrail.' : 'Thanks, that’s the reasoning I needed.'); S.pending = null; S.voiceAnswerSubmitted = false; renderCoverage(d.coverage); }
-function onChat(msg) {
+function onAck(d) {
+  if (isGuide) {
+    const spoken = d.spoken || (d.guardrail ? 'Got it — I’ll treat that as a guardrail.' : 'Got it — that helps me understand the decision.');
+    addMsg('agent', spoken);
+    speak(spoken);
+  }
+  S.pending = null; S.voiceAnswerSubmitted = false; renderCoverage(d.coverage);
+}
+function onChat(msg, { speakStudentQuestion = true, speakAgent = true } = {}) {
   if (msg.from === 'guide') addMsg('guide', msg.text);
   else if (msg.from === 'student') {
     addMsg('student', msg.text);
-    if (isGuide) {
-      toast('Student asked a question');
-      if (S.micOn && S.recog && !S.speaking) armMic();
+    if (speakStudentQuestion && S.phase !== 'practice') {
+      speak(msg.text);
     }
+    if (isGuide) toast('Student asked a question');
   }
   else if (msg.from === 'activity') addMsg('activity', msg.text, { lbl: 'Live activity · Claude' });
-  else addMsg('agent', msg.text);
+  else {
+    addMsg('agent', msg.text);
+    if (!isGuide && speakAgent) speak(msg.text);
+  }
 }
 
 /* ============================================================
@@ -219,8 +293,11 @@ async function boot() {
   else renderStudentLive();
   if (S.phase === 'capture') onShareState(view.controls?.shareState || { sharing: false, paused: false });
   setOrb('listening'); setStatus(idleText());
+  const greeting = "Hi, I'm Mentaur. I'll assist you during this simulation demo.";
+  addMsg('agent', greeting);
+  await speak(greeting);
   // replay recent transcript for late joiners
-  view.chat.forEach(onChat);
+  view.chat.forEach((msg) => onChat(msg, { speakStudentQuestion: false, speakAgent: false }));
   renderSuggestions(view.suggestions);
   if (!isGuide && view.latestFrame) onFrame(view.latestFrame);
 }
@@ -231,12 +308,12 @@ async function boot() {
 function renderGuideCapture() {
   S.phase = 'capture'; setPhase('capture');
   const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Capture the real workflow</h2><div class="lead">Work the way you normally would. Mentaur watches quietly, records live activity, and asks grounded questions so the judgment behind each step is not lost.</div></div><span class="pill" id="progressPill">0 of 3 processed</span>`));
+  s.appendChild(el('div', 'surface-head', `<div><h2>Receive inventory</h2><div class="lead">Review three items, choose stock, reorder, or quarantine, then complete the matching action. Mentaur asks about the judgment behind each choice.</div></div><span class="pill" id="progressPill">0 of ${S.invoices.length} processed</span>`));
   const preview = el('section', 'guide-share-preview hidden'); preview.id = 'guideSharePreview';
   preview.innerHTML = `<div class="guide-preview-head"><div><b>Your shared screen</b><span>Live preview of exactly what Mentaur is observing.</span></div><span class="pill live" id="guidePreviewPill">● sharing</span></div><div class="mirror guide-mirror"><video id="shareVid" muted autoplay playsinline></video><div class="mirror-state hidden" id="guideMirrorState"></div></div>`;
   s.appendChild(preview);
   const erp = el('div', 'erp');
-  erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Sandbox workspace · Accounts Payable <span class="tag">capture mode</span>`));
+  erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Sandbox workspace · Inventory receiving <span class="tag">capture mode</span>`));
   const q = el('div', 'queue'); q.id = 'queue'; erp.appendChild(q); s.appendChild(erp);
   s.appendChild(Object.assign(el('div'), { id: 'editorMount' }));
   const sb = el('div', 'sharebar');
@@ -247,7 +324,7 @@ function renderGuideCapture() {
   $('#questionModeBtn').onclick = toggleQuestionMode;
   renderCaptureControls();
   renderQueue(); $('#coverageBox').style.display = 'block'; renderCoverage([]);
-  addMsg('system', 'Session started. Work normally — I’m watching.');
+  addMsg('system', 'Session started. Review the inventory items — I’m watching.');
   reportActivity(false);
 }
 function renderQueue() {
@@ -255,15 +332,16 @@ function renderQueue() {
   S.invoices.forEach((inv) => {
     const row = el('div', 'inv' + (S.selected === inv.id ? ' selected' : '') + (inv.action ? ' done' : ''));
     if (isGuide) row.onclick = () => selectInvoice(inv.id);
-    const stMap = { approve: ['approved', 'Approved'], hold: ['held', 'Held'], escalate: ['escalated', '2nd approval'] };
+    const stMap = { approve: ['approved', 'Stocked'], hold: ['held', 'Quarantined'], escalate: ['escalated', 'Reorder queued'] };
     const [cls, txt] = inv.action ? stMap[inv.action] : ['open', 'Open'];
-    row.innerHTML = `<div class="id">${inv.id}</div><div><div class="who">${redact(inv.supplier)}</div><div class="meta">${inv.desc} · ${inv.country}${inv.month ? ' · ' + inv.month : ''}</div></div><div style="display:flex;align-items:center;gap:14px"><div class="amt">${redact('€' + inv.amount.toLocaleString('de-DE'))}</div><div class="state ${cls}">${txt}</div></div>`;
+    const decision = { stock: 'Stock', reorder: 'Reorder', quarantine: 'Quarantine' }[inv.cc] || 'Pending';
+    row.innerHTML = `<div class="item-photo" aria-hidden="true">${inv.photo || '📦'}</div><div class="id">${inv.id}</div><div><div class="who">${redact(inv.desc)}</div><div class="meta">${inv.amount} units · ${inv.country} · ${inv.condition || 'condition unknown'}</div></div><div style="display:flex;align-items:center;gap:14px"><div class="amt">${decision}</div><div class="state ${cls}">${txt}</div></div>`;
     q.appendChild(row);
   });
   const done = S.invoices.filter((i) => i.action).length;
-  $('#progressPill') && ($('#progressPill').textContent = `${done} of 3 processed`);
+  $('#progressPill') && ($('#progressPill').textContent = `${done} of ${S.invoices.length} processed`);
 }
-function selectInvoice(id) { S.selected = id; reportActivity(false); api(`/api/room/${CODE}/change`, { invId: id, trigger: 'open' }); renderQueue(); renderEditor(); }
+function selectInvoice(id) { stopSpeech({ announce: false }); S.selected = id; reportActivity(false); api(`/api/room/${CODE}/change`, { invId: id, trigger: 'open' }); renderQueue(); renderEditor(); }
 function renderEditor() {
   const mount = $('#editorMount'); if (!mount) return; mount.innerHTML = '';
   const inv = S.invoices.find((i) => i.id === S.selected); if (!inv) return;
@@ -272,14 +350,14 @@ function renderEditor() {
   ed.innerHTML = `
     <div class="editor-head"><span class="id">${inv.id}</span><h3>${redact(inv.supplier)}</h3><span class="state ${inv.action || 'open'}" style="margin-left:auto">${inv.action || 'Open'}</span></div>
     <div class="editor-body">
-      <div class="field"><label>Description</label><div class="val">${inv.desc}</div></div>
-      <div class="field"><label>Amount</label><div class="val">${redact('€' + inv.amount.toLocaleString('de-DE'))}</div><div class="valsub">${inv.category}${inv.month ? ' · booked ' + inv.month : ''}</div></div>
-      <div class="field"><label>Supplier country</label><div class="val">${inv.country === 'CZ' ? 'Czech Republic (subsidiary)' : 'Germany'}</div></div>
-      <div class="field"><label>Cost center</label><select id="ccSel" ${dis}>${S.costCenters.map((c) => `<option value="${c.v}" ${inv.cc === c.v ? 'selected' : ''}>${c.t}</option>`).join('')}</select></div>
+      <div class="field"><label>Item</label><div class="val">${inv.photo || '📦'} ${inv.desc}</div><div class="valsub">${inv.condition || 'condition unknown'}</div></div>
+      <div class="field"><label>Count</label><div class="val">${inv.amount} units</div><div class="valsub">Location: ${inv.country}</div></div>
+      <div class="field"><label>Receiving note</label><div class="valsub">${inv.note || 'No note recorded.'}</div></div>
+      <div class="field"><label>Inventory decision</label><select id="ccSel" ${dis}>${S.costCenters.map((c) => `<option value="${c.v}" ${inv.cc === c.v ? 'selected' : ''}>${c.t}</option>`).join('')}</select></div>
       <div class="actions-row">
-        <button class="btn primary" id="approveBtn" ${dis}>✓ Approve &amp; post</button>
-        <button class="btn warn" id="holdBtn" ${dis}>⏸ Hold</button>
-        <button class="btn esc" id="escBtn" ${dis}>⇅ 2nd approval</button>
+        <button class="btn primary" id="approveBtn" ${dis}>✓ Put into stock</button>
+        <button class="btn warn" id="holdBtn" ${dis}>⏸ Quarantine</button>
+        <button class="btn esc" id="escBtn" ${dis}>↻ Reorder</button>
       </div>
     </div>`;
   mount.appendChild(ed);
@@ -289,7 +367,7 @@ function renderEditor() {
   $('#holdBtn').onclick = () => doAction(inv, 'hold');
   $('#escBtn').onclick = () => doAction(inv, 'escalate');
 }
-async function doAction(inv, action) { inv.action = action; const v = await api(`/api/room/${CODE}/change`, { invId: inv.id, trigger: 'action', action }); S.invoices = v.invoices; renderQueue(); renderEditor(); renderCoverage(v.coverage); }
+async function doAction(inv, action) { stopSpeech({ announce: false }); inv.action = action; const v = await api(`/api/room/${CODE}/change`, { invId: inv.id, trigger: 'action', action }); S.invoices = v.invoices; renderQueue(); renderEditor(); renderCoverage(v.coverage); }
 
 /* screen share + Claude vision */
 function renderCaptureControls() {
@@ -429,11 +507,11 @@ function startFrameLoop(video) {
 function renderStudentLive() {
   S.phase = 'capture'; setPhase('capture');
   const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Follow the work live</h2><div class="lead">Watch the Guide’s decisions unfold in real time. Ask by voice or text, or use a suggested question when you want more context.</div></div><span class="pill live">● live</span>`));
+  s.appendChild(el('div', 'surface-head', `<div><h2>Follow inventory receiving</h2><div class="lead">Watch the Guide decide what to stock, reorder, or quarantine.</div></div><span class="pill live">● live</span>`));
   const frame = el('div', 'mirror'); frame.id = 'mirror';
   frame.innerHTML = `<img id="mirrorImg" class="hidden" alt="guide screen"><div class="mirror-empty" id="mirrorEmpty">The guide’s screen appears here when they share it.</div><div class="mirror-state hidden" id="mirrorState"></div>`;
   s.appendChild(frame);
-  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Guide workspace <span class="tag">live mirror</span>`));
+  const erp = el('div', 'erp');   erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Inventory workspace <span class="tag">live mirror</span>`));
   const q = el('div', 'queue'); q.id = 'queue'; erp.appendChild(q); s.appendChild(erp);
   renderQueue();
   $('#suggestions').style.display = 'block';
@@ -471,12 +549,12 @@ function startTeachback(steps) {
   S.phase = 'teachback';
   const s = $('#surface'); s.innerHTML = '';
   s.appendChild(el('div', 'surface-head', "<div><h2>Confirm the Work Map</h2><div class='lead'>Mentaur has reconstructed the workflow from the screen events and your explanations. Confirm it before it becomes the Student’s playbook.</div></div>"));
-  const lines = steps.map((st, i) => `${i + 1}. ${st.title}: ${st.decision} — because “${st.reason}”. Guardrail: ${st.guardrail}`);
+  const lines = steps.map((st, i) => `${i + 1}. ${st.title}: ${st.decision} — because “${st.reason}”. When to stop: ${st.guardrail}`);
   const card = el('div', 'intro');
   card.innerHTML = `<h3>What Mentaur learned</h3><ol>${lines.map((l) => `<li>${redact(l)}</li>`).join('')}</ol><button class="btn primary" id="confirmTB">✓ Confirm & build the playbook</button>`;
   s.appendChild(card);
-  addMsg('agent', 'I’ll explain it back — confirm on the left.');
-  speak('Here’s how I understand your process. ' + lines.join('. '));
+  addMsg('agent', 'I prepared a Work Map from your demo session. Review it on the left and confirm it.');
+  speak('I prepared a Work Map from your demo session. It is available for the new hire.');
   $('#confirmTB').onclick = async () => { addMsg('guide', 'Yes, that’s how it works.'); await api(`/api/room/${CODE}/confirm`, {}); };
 }
 function waitForCurriculum() { const s = $('#surface'); s.innerHTML = `<div class="intro"><h3>Building the shared playbook…</h3><p>The Guide is confirming the Work Map. This page updates automatically when it is ready.</p></div>`; }
@@ -495,11 +573,16 @@ async function renderCurriculum() {
     card.innerHTML = `<div class="lesson-n">${L.n}</div><div class="lesson-body"><h3>${redact(L.title)}</h3>
       <div class="row2"><div class="k">Did</div><div>${redact(L.did)}</div></div>
       <div class="row2"><div class="k">Why</div><div class="quote">“${redact(L.reason)}”</div></div>
-      <div class="row2"><div class="k">Guardrail</div><div class="guardtext">${redact(L.guardrail)}</div></div>
+      <div class="row2"><div class="k">When to stop</div><div class="guardtext">${redact(L.guardrail)}</div></div>
       <div class="row2"><div class="k">Check</div><div>${redact(L.check)}</div></div></div>`;
     list.appendChild(card);
   });
   s.appendChild(list);
+  if (Array.isArray(c.tutorial)) {
+    const tutorial = el('div', 'intro');
+    tutorial.innerHTML = `<h3>Step-by-step tutorial</h3><div class="tutorial-steps">${c.tutorial.map((t) => `<div class="tutorial-step"><b>${t.step}. ${redact(t.title)}</b><span>${redact(t.text)}</span></div>`).join('')}</div>`;
+    s.appendChild(tutorial);
+  }
   const cta = el('div'); cta.style.marginTop = '18px';
   if (!isGuide) cta.innerHTML = `<button class="btn primary big" id="startPractice">Start coached practice →</button>`;
   else cta.innerHTML = `<div class="hint" style="color:var(--muted)">The student can now practice. You’ll see their result here.</div>`;
@@ -514,12 +597,16 @@ async function startPractice() {
   const p = await api(`/api/room/${CODE}/practice`, { studentId: 's' });
   S.teach = p; S.phase = 'practice'; setPhase('practice');
   const inv = p.inv; const s = $('#surface'); s.innerHTML = '';
-  s.appendChild(el('div', 'surface-head', `<div><h2>Practice the judgment</h2><div class='lead'>This is a case your Guide never showed you. Mentaur will stay out of the way unless you’re about to cross a <b>guardrail</b>.</div></div><span class="pill">unseen case</span>`));
-  const erp = el('div', 'erp'); erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Practice workspace <span class="tag">Mentaur coaching</span>`)); s.appendChild(erp);
+  s.appendChild(el('div', 'surface-head', `<div><h2>Practice the inventory decision</h2><div class='lead'>This is an unseen item. Mentaur stays out of the way unless you are about to make an unsafe choice.</div></div><span class="pill">unseen item</span>`));
+  const erp = el('div', 'erp');   erp.appendChild(el('div', 'erp-bar', `<span class="dot"></span> Inventory workspace <span class="tag">Mentaur coaching</span>`)); s.appendChild(erp);
   s.appendChild(Object.assign(el('div'), { id: 'teachMount', style: 'margin-top:16px' }));
   renderPracticeEditor();
-  addMsg('agent', `New case: ${inv.id}, ${redact(inv.supplier)}, ${redact('€' + inv.amount.toLocaleString('de-DE'))}. I’ll let you drive.`);
-  speak('New case loaded. I’ll let you drive.');
+  const announcement = S.practiceStarted
+    ? 'Next one!'
+    : `New item: ${inv.id}, ${redact(inv.desc)}, ${inv.amount} units. I’ll let you drive.`;
+  S.practiceStarted = true;
+  addMsg('agent', announcement);
+  speak(announcement);
   setStatus(idleText());
 }
 function renderPracticeEditor() {
@@ -527,11 +614,11 @@ function renderPracticeEditor() {
   const ed = el('div', 'editor');
   ed.innerHTML = `<div class="editor-head"><span class="id">${inv.id}</span><h3>${redact(inv.supplier)}</h3><span class="state ${inv.action || 'open'}" style="margin-left:auto">${inv.action || 'Open'}</span></div>
     <div class="editor-body">
-      <div class="field"><label>Description</label><div class="val">${inv.desc}</div></div>
-      <div class="field"><label>Amount</label><div class="val">${redact('€' + inv.amount.toLocaleString('de-DE'))}</div><div class="valsub">${inv.category}</div></div>
-      <div class="field"><label>Cost center</label><select id="tccSel" ${inv.action ? 'disabled' : ''}>${S.costCenters.map((c) => `<option value="${c.v}" ${inv.cc === c.v ? 'selected' : ''}>${c.t}</option>`).join('')}</select></div>
+      <div class="field"><label>Item</label><div class="val">${inv.photo || '📦'} ${inv.desc}</div><div class="valsub">${inv.amount} units · ${inv.country} · ${inv.condition || 'condition unknown'}</div></div>
+      <div class="field"><label>Receiving note</label><div class="valsub">${inv.note || 'No note recorded.'}</div></div>
+      <div class="field"><label>Inventory decision</label><select id="tccSel" ${inv.action ? 'disabled' : ''}>${S.costCenters.map((c) => `<option value="${c.v}" ${inv.cc === c.v ? 'selected' : ''}>${c.t}</option>`).join('')}</select></div>
       <div class="field"><label>Predict</label><div class="valsub">What would your guide do?</div></div>
-      <div class="actions-row"><button class="btn primary" id="tApprove" ${inv.action ? 'disabled' : ''}>✓ Approve &amp; post</button><button class="btn warn" id="tHold" ${inv.action ? 'disabled' : ''}>⏸ Hold</button><button class="btn esc" id="tEsc" ${inv.action ? 'disabled' : ''}>⇅ 2nd approval</button></div>
+      <div class="actions-row"><button class="btn primary" id="tApprove" ${inv.action ? 'disabled' : ''}>✓ Put into stock</button><button class="btn warn" id="tHold" ${inv.action ? 'disabled' : ''}>⏸ Quarantine</button><button class="btn esc" id="tEsc" ${inv.action ? 'disabled' : ''}>↻ Reorder</button></div>
     </div>`;
   mount.appendChild(ed);
   $('#tccSel').onchange = (e) => { inv.cc = e.target.value; };
@@ -548,11 +635,23 @@ function onPracticeCatch(d) {
 function onPracticeDone(d) {
   if (isGuide) { addMsg('agent', 'The student finished the practice case.'); return; }
   const s = $('#surface'); const card = el('div', 'scorecard');
-  card.innerHTML = `<h3>Your mastery snapshot</h3>${d.score.map((x) => `<div class="scorerow"><span class="ic ${x.ok ? 'ok' : 'miss'}">${x.ok ? '✓' : '!'}</span><div class="t"><b>${x.label}</b><div>${x.note}</div></div></div>`).join('')}<div style="margin-top:16px;display:flex;gap:10px"><button class="btn" id="againBtn">↺ Try again</button><button class="btn ghost" id="backCur">← Work Map</button></div>`;
+  const action = d.allComplete
+    ? `<button class="btn primary" id="finishPractice">Finish simulation</button>`
+    : `<button class="btn primary" id="nextPractice">Next practice case →</button>`;
+  card.innerHTML = `<h3>Practice case complete</h3><div class="hint">${d.completedCases} of ${d.totalCases} cases completed.</div>${d.score.map((x) => `<div class="scorerow"><span class="ic ${x.ok ? 'ok' : 'miss'}">${x.ok ? '✓' : '!'}</span><div class="t"><b>${x.label}</b><div>${x.note}</div></div></div>`).join('')}<div style="margin-top:16px;display:flex;gap:10px">${action}<button class="btn ghost" id="backCur">← Work Map</button></div>`;
   s.appendChild(card);
-  $('#againBtn').onclick = startPractice; $('#backCur').onclick = renderCurriculum;
+  if (d.allComplete) {
+    $('#finishPractice').onclick = () => {
+      addMsg('agent', 'Congratulations — you finished all five inventory practice cases.');
+      speak('Congratulations — you finished all five inventory practice cases.');
+      $('#finishPractice').disabled = true;
+    };
+  } else {
+    $('#nextPractice').onclick = startPractice;
+  }
+  $('#backCur').onclick = renderCurriculum;
   const allOk = d.score.every((x) => x.ok);
-  const msg = allOk ? 'Nicely done — a case your guide never showed you.' : 'Good — you fixed it after I flagged it. That’s the guardrail to remember.';
+  const msg = allOk ? 'Nicely done — this case is complete.' : 'Good — you fixed it after I flagged it. That is the safety check to remember.';
   addMsg('agent', msg); speak(msg);
 }
 
@@ -563,6 +662,8 @@ function setPhase(p) { const order = ['capture', 'curriculum', 'practice']; docu
 /* ---------- composer (both roles) ---------- */
 async function submitReply() {
   const box = $('#replyBox'); const txt = box.value.trim(); if (!txt) return; box.value = '';
+  S.micDraft = '';
+  if (isGuide && S.speaking) stopSpeech({ announce: false });
   reportActivity(false);
   if (S.offRecord) { await api(`/api/room/${CODE}/offrecord`, { on: true }); S.offRecord = false; $('#offRecBtn').classList.remove('on'); }
   await api(`/api/room/${CODE}/chat`, { from: ROLE, text: txt });
@@ -574,24 +675,29 @@ $('#replyBox').addEventListener('input', (e) => {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px';
 });
-$('#micToggle').addEventListener('change', (e) => {
-  S.micOn = e.target.checked;
-  S.micBlocked = false;
-  if (S.micOn && !S.recog) S.recog = initMic();
-  if (S.micOn && !S.recog) {
-    toast('Voice input needs Chrome — use text.'); e.target.checked = false; S.micOn = false; return;
-  }
-  if (!S.micOn) {
-    clearTimeout(S.micArmTimer);
-    try { if (S.recogActive) S.recog.abort(); } catch {}
-    return;
-  }
-  S.voiceAnswerSubmitted = false;
-  // If a question is already pending, keep listening until it is answered.
-  // Otherwise preserve the existing one-shot voice-entry behavior.
-  armMic({ requirePending: !!(isGuide && S.pending) });
+const pushToTalk = $('#pushToTalk');
+function beginPushToTalk(e) {
+  if (e) e.preventDefault();
+  if (!S.recog) S.recog = initMic();
+  if (!S.recog) { toast('Voice input needs Chrome — use text.'); return; }
+  startMicCapture();
+}
+function endPushToTalk(e) {
+  if (e) e.preventDefault();
+  stopMicCapture();
+}
+pushToTalk.addEventListener('pointerdown', beginPushToTalk);
+pushToTalk.addEventListener('pointerup', endPushToTalk);
+pushToTalk.addEventListener('pointercancel', endPushToTalk);
+pushToTalk.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') beginPushToTalk(e); });
+pushToTalk.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') endPushToTalk(e); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' || e.repeat || e.target.matches('textarea, input, button, select')) return;
+  beginPushToTalk(e);
 });
+document.addEventListener('keyup', (e) => { if (e.key === ' ') endPushToTalk(e); });
 $('#redactToggle').addEventListener('change', async (e) => { S.redact = e.target.checked; await api(`/api/room/${CODE}/redact`, { on: S.redact }); toast(S.redact ? 'Redaction on' : 'Redaction off'); if ($('#queue')) renderQueue(); });
 $('#offRecBtn').addEventListener('click', () => { S.offRecord = !S.offRecord; $('#offRecBtn').classList.toggle('on', S.offRecord); toast(S.offRecord ? 'Next answer off the record' : 'Back on the record'); });
+$('#stopVoiceBtn').addEventListener('click', () => stopSpeech());
 
 boot();

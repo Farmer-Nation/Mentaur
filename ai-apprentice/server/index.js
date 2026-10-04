@@ -92,14 +92,14 @@ async function api(req, res, u) {
     switch (action) {
       case 'activity': R.reportActivity(room, body); return send(res, 200, { ok: true });
       case 'change': R.applyChange(room, body); return send(res, 200, R.roomView(room));
-      case 'chat': R.postChat(room, body); return send(res, 200, { ok: true });
+      case 'chat': await R.postChat(room, body); return send(res, 200, { ok: true });
       case 'frame': if (body.frame) R.pushFrame(room, body.frame); return send(res, 200, { ok: true });
       case 'redact': R.setRedact(room, !!body.on); return send(res, 200, { ok: true });
       case 'speaking': R.setSpeaking(room, !!body.on); return send(res, 200, { ok: true });
       case 'question-mode': R.setQuestionsPaused(room, !!body.paused); return send(res, 200, { ok: true, paused: room.questionsPaused });
       case 'share-state': R.setShareState(room, body); return send(res, 200, { ok: true, shareState: room.shareState });
       case 'offrecord': R.setOffRecord(room, !!body.on); return send(res, 200, { ok: true });
-      case 'debrief': R.startDebrief(room); return send(res, 200, { ok: true });
+      case 'debrief': await R.startDebrief(room); return send(res, 200, { ok: true });
       case 'confirm': await R.confirmTeachback(room); return send(res, 200, { ok: true });
       case 'practice': return send(res, 200, R.startPractice(room, body.studentId));
       case 'practice-attempt': return send(res, 200, await R.practiceAttempt(room, body));

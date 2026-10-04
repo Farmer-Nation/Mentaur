@@ -13,17 +13,39 @@ const PAUSE_MS = 2200; // silence/no-activity window that counts as "a pause"
 const IDLE_PROMPT_PAUSE_MS = 900; // quiet gap for periodic learner prompts during an active share
 
 // Produce a candidate question for an on-screen event, or null.
-// `inv` is the invoice after the change. `trigger` is 'cc' | 'action'.
+// `inv` is the simulation case after the change. `trigger` is 'cc' | 'action'.
 export function questionFor(trigger, inv) {
   if (!inv) return null;
 
+  if (inv.category === 'inventory') {
+    if (trigger === 'cc' && inv.cc === 'reorder') {
+      return key(inv, 'reorder', `You chose reorder for ${inv.id}. What signal made you reorder now?`, false, 'inventory_decision');
+    }
+    if (trigger === 'cc' && inv.cc === 'stock' && inv.amount < 10) {
+      return key(inv, 'low-stock', `${inv.id} is below the usual stock level. Why are you putting it into stock?`, true, 'inventory_decision');
+    }
+    if (trigger === 'cc' && inv.cc === 'quarantine') {
+      return key(inv, 'quarantine', `You quarantined ${inv.id}. What would need to be checked before it becomes available?`, true, 'inventory_decision');
+    }
+    if (trigger === 'action' && inv.action === 'approve') {
+      return key(inv, 'stock', `You put ${inv.id} into stock. What would make you stop and inspect it instead?`, true, 'stock');
+    }
+    if (trigger === 'action' && inv.action === 'hold') {
+      return key(inv, 'hold', `You held ${inv.id}. What condition would let you release it?`, true, 'hold');
+    }
+    if (trigger === 'action' && inv.action === 'escalate') {
+      return key(inv, 'reorder-guard', `Before reordering ${inv.id}, what must you verify?`, true, 'reorder');
+    }
+    return null;
+  }
+
   // Judgment call: coding a big equipment invoice to capex.
   if (trigger === 'cc' && inv.category === 'equipment' && inv.cc === '0400') {
-    return key(inv, 'capex', `You coded ${inv.id} to capex. What made you do that?`, false, 'code_cc');
+    return key(inv, 'capex', `You coded ${inv.id} to capex. What made you choose that?`, false, 'code_cc');
   }
   // Guardrail: big equipment left on an opex code — is that deliberate?
   if (trigger === 'cc' && inv.category === 'equipment' && inv.cc === '4711' && inv.amount > 5000) {
-    return key(inv, 'opex-big', `That's equipment over €5,000 on an opex code. Deliberate, or should it be capex?`, true, 'code_cc');
+    return key(inv, 'opex-big', `That's equipment over €5,000 on an operating-expense code. Deliberate, or should it be capex?`, true, 'code_cc');
   }
   // Guardrail: holding an invoice.
   if (trigger === 'action' && inv.action === 'hold') {
@@ -41,7 +63,13 @@ export function questionFor(trigger, inv) {
 }
 
 function key(inv, suffix, q, guardrail, stepKey) {
-  return { key: `${inv.id}:${suffix}`, q, guardrail, stepKey, invId: inv.id };
+  return {
+    key: `${inv.id}:${suffix}`, q, guardrail, stepKey, invId: inv.id,
+    context: {
+      id: inv.id, description: inv.desc, quantity: inv.amount, location: inv.country,
+      condition: inv.condition, note: inv.note, selectedDecision: inv.cc, completedAction: inv.action,
+    },
+  };
 }
 
 // WHEN: given the live session clock and the last activity time, is now a good
@@ -98,6 +126,19 @@ export function isUnderstood(invoices, qa) {
 // Teach: did the new hire break a guardrail on the unseen case?
 // Returns { ok } or { ok:false, question, scoreLabel, scoreNote }.
 export function evaluateTeachDecision(teachInv, chosen) {
+  if (teachInv.category === 'inventory') {
+    if (chosen.cc !== teachInv.truth.cc) {
+      return {
+        ok: false,
+        question: `Pause and look again at the receiving note. What signal in this item would make your guide choose ${teachInv.truth.cc} instead?`,
+        scoreLabel: `Choose ${teachInv.truth.cc} for this evidence`,
+        scoreNote: `You chose ${chosen.cc || 'no decision'}, but the captured evidence supports ${teachInv.truth.cc}.`,
+        guardrail: teachInv.truth.guardrail,
+      };
+    }
+    return { ok: true, scoreLabel: `Choose ${teachInv.truth.cc} for this evidence`,
+      scoreNote: `Correct — ${teachInv.truth.why}` };
+  }
   const wrongCC = chosen.cc !== teachInv.truth.cc; // equipment > €5k must be capex
   if (wrongCC) {
     return {

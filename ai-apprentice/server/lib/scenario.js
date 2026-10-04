@@ -3,11 +3,52 @@
 // and served to the browser so the ERP renders the same data.
 
 export const COST_CENTERS = [
-  { v: '', t: '— select cost center —' },
-  { v: '4711', t: '4711 · Operating expense (opex)' },
-  { v: '0400', t: '0400 · Capital expenditure (capex)' },
-  { v: '5200', t: '5200 · Maintenance' },
+  { v: '', t: '— choose inventory action —' },
+  { v: 'stock', t: 'Put into stock' },
+  { v: 'reorder', t: 'Reorder now' },
+  { v: 'quarantine', t: 'Quarantine and inspect' },
 ];
+
+// A single, easy-to-explain case for live demos. The full invoice set remains
+// available for regression tests and can be restored without changing the
+// planner or room protocol.
+export function simpleDemoInvoices() {
+  return [
+    {
+      id: 'ITEM-101', supplier: 'Northstar Office',
+      desc: 'Wireless keyboards', amount: 4, country: 'Shelf A', condition: 'sealed', photo: '⌨️',
+      note: 'Receiving note: count confirmed. No open purchase order is visible.',
+      category: 'inventory',
+      truth: {
+        cc: 'reorder', action: 'escalate',
+        why: 'Only four are left and the reorder point is ten, so I reorder before we run out.',
+        guardrail: 'Do not reorder if the count has not been verified or the item is already on an open purchase order.',
+      },
+    },
+    {
+      id: 'ITEM-102', supplier: 'Northstar Office',
+      desc: 'USB-C docking stations', amount: 18, country: 'Shelf B', condition: 'sealed', photo: '🔌',
+      note: 'Receiving note: two cartons are still sealed; count matches the packing slip.',
+      category: 'inventory',
+      truth: {
+        cc: 'stock', action: 'approve',
+        why: 'The count is above the reorder point, so I record it and leave it in stock.',
+        guardrail: 'If the count is damaged or mismatched, stop and inspect before stocking it.',
+      },
+    },
+    {
+      id: 'ITEM-103', supplier: 'Northstar Office',
+      desc: 'Laptop chargers', amount: 7, country: 'Receiving', condition: 'damaged box', photo: '🔋',
+      note: 'Receiving note: outer carton is crushed and three serial numbers are unreadable.',
+      category: 'inventory',
+      truth: {
+        cc: 'quarantine', action: 'hold',
+        why: 'The package is damaged, so I keep it out of stock until it is inspected.',
+        guardrail: 'Never put damaged or unverified items into available stock.',
+      },
+    },
+  ];
+}
 
 export function captureInvoices() {
   return [
@@ -44,7 +85,8 @@ export function captureInvoices() {
   ];
 }
 
-// A case the expert never demonstrated, used in Teach mode.
+// Legacy invoice practice case retained for compatibility with the planner
+// unit tests. The live demo uses teachInventory below.
 export function teachInvoice() {
   return {
     id: 'INV-4480', supplier: 'Hartmann Werkzeug AG',
@@ -56,4 +98,68 @@ export function teachInvoice() {
       guardrail: 'No asset number, no capex booking.',
     },
   };
+}
+
+export function teachInventory() {
+  return teachInventoryCases()[0];
+}
+
+export function teachInventoryCases() {
+  return [
+    {
+    id: 'ITEM-104', supplier: 'Northstar Office',
+    desc: 'Wireless mice', amount: 3, country: 'Receiving', condition: 'unverified', photo: '🖱️',
+    note: 'Receiving note: the delivery arrived without a signed count sheet.',
+    category: 'inventory',
+    truth: {
+      cc: 'quarantine', action: 'hold',
+      why: 'The count is not verified, so I quarantine it before stocking it.',
+      guardrail: 'Never put unverified items into available stock.',
+    },
+    },
+    {
+      id: 'ITEM-105', supplier: 'Northstar Office',
+      desc: 'Ergonomic monitors', amount: 6, country: 'Shelf C', condition: 'sealed',
+      photo: '🖥️', note: 'Receiving note: count matches the packing slip; one open purchase order exists.',
+      category: 'inventory',
+      truth: {
+        cc: 'stock', action: 'approve',
+        why: 'The count is verified and the items are sealed, so I stock them.',
+        guardrail: 'If the delivery does not match the packing slip, stop before stocking it.',
+      },
+    },
+    {
+      id: 'ITEM-106', supplier: 'Northstar Office',
+      desc: 'USB-C cables', amount: 2, country: 'Shelf D', condition: 'sealed',
+      photo: '🔗', note: 'Receiving note: stock is below the reorder point and no purchase order is open.',
+      category: 'inventory',
+      truth: {
+        cc: 'reorder', action: 'escalate',
+        why: 'Two units remain and there is no open purchase order, so I reorder.',
+        guardrail: 'Verify the count and check open purchase orders before reordering.',
+      },
+    },
+    {
+      id: 'ITEM-107', supplier: 'Northstar Office',
+      desc: 'Barcode scanners', amount: 4, country: 'Receiving', condition: 'sealed',
+      photo: '📷', note: 'Receiving note: the count matches, but one scanner has a different model number.',
+      category: 'inventory',
+      truth: {
+        cc: 'quarantine', action: 'hold',
+        why: 'The model mismatch needs inspection before the delivery can be stocked.',
+        guardrail: 'Stop when the model or serial details do not match the expected delivery.',
+      },
+    },
+    {
+      id: 'ITEM-108', supplier: 'Northstar Office',
+      desc: 'Packing labels', amount: 24, country: 'Shelf E', condition: 'sealed',
+      photo: '🏷️', note: 'Receiving note: the labels are sealed, the count matches, and stock is healthy.',
+      category: 'inventory',
+      truth: {
+        cc: 'stock', action: 'approve',
+        why: 'The delivery is verified and there is no signal that it needs a special action.',
+        guardrail: 'If the package is opened or the count changes, verify it again before stocking.',
+      },
+    },
+  ];
 }

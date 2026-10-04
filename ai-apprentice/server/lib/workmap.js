@@ -1,4 +1,4 @@
-// Builds the Work Map: one step per processed invoice, each linking a screen
+// Builds the Work Map: one step per processed item, each linking a screen
 // moment, the decision, the reason in the expert's own words, and guardrails.
 
 function fmt(ms) {
@@ -21,39 +21,57 @@ export function buildWorkMap(sess) {
     );
     steps.push({
       idx: i + 1,
-      title: `Process ${inv.id} — ${inv.supplier}`,
+      title: `Receive ${inv.id} — ${inv.desc}`,
       moment: decEv ? fmt(decEv.t) : openEv ? fmt(openEv.t) : '—',
-      momentWhat: `${inv.id} · ${inv.category}${inv.cc ? ' · cost center ' + inv.cc : ''}`,
+      momentWhat: `${inv.id} · ${inv.category}${inv.cc ? ' · inventory decision ' + inv.cc : ''}`,
       decision: decisionText(inv),
+      signal: inv.note || `${inv.amount} units at ${inv.country}`,
+      evidence: [inv.condition, inv.note].filter(Boolean),
       reason: whyQA ? whyQA.a : inv.truth.why,
       reasonWho: whyQA ? 'expert, during the session' : 'inferred',
       guardrail: guardQA ? guardQA.a : inv.truth.guardrail,
-      judgment: inv.category === 'equipment' || inv.action !== 'approve',
+      judgment: inv.category === 'inventory' || inv.category === 'equipment' || inv.action !== 'approve',
       hasGuard: !!(guardQA || inv.truth.guardrail),
       invId: inv.id,
+      tutorial: [
+        `Observe: ${inv.desc} (${inv.amount} units, ${inv.condition || 'condition unknown'}).`,
+        `Decide: ${decisionText(inv)} when the evidence supports it.`,
+        `Act: complete the inventory action.`,
+        `Verify: ${inv.truth.guardrail}`,
+      ],
     });
   });
   return steps;
 }
 
 function decisionText(inv) {
-  const act = { approve: 'Approved & posted', hold: 'Held for reconciliation', escalate: 'Sent for 2nd approval' }[inv.action] || 'Handled';
-  const cc = inv.cc ? ` · coded ${inv.cc === '0400' ? 'capex (0400)' : inv.cc === '4711' ? 'opex (4711)' : inv.cc}` : '';
-  return act + cc;
+  const act = inv.category === 'inventory'
+    ? { approve: 'Put into stock', hold: 'Quarantined', escalate: 'Reorder queued' }[inv.action]
+    : { approve: 'Approved & posted', hold: 'Held for reconciliation', escalate: 'Sent for 2nd approval' }[inv.action] || 'Handled';
+  const decision = inv.cc ? ` · ${inv.cc === 'stock' ? 'put into stock' : inv.cc === 'reorder' ? 'reorder now' : inv.cc === 'quarantine' ? 'quarantine and inspect' : inv.cc}` : '';
+  return act + decision;
 }
 
 // Agent-ready export: instructions a downstream agent can load.
 export function toAgentJSON(sess) {
   const steps = buildWorkMap(sess);
   return {
-    workflow: 'Accounts payable — month-end invoice processing',
+    workflow: 'Inventory receiving — stock, reorder, or quarantine',
+    summary: `This demo shows how to inspect an incoming item, choose stock, reorder, or quarantine, and verify the evidence before continuing.`,
+    tutorial: [
+      'Observe the quantity, condition, location, and receiving note.',
+      'Decide which action the evidence supports.',
+      'Complete the matching inventory action.',
+      'Verify what would make you stop and ask for help.',
+    ],
     captured_at: new Date().toISOString(),
     steps: steps.map((s) => ({
       step: s.idx, title: s.title, screen_moment: s.moment,
       decision: s.decision, reason: s.reason, guardrails: s.guardrail,
+      signal: s.signal, tutorial: s.tutorial,
       judgment_call: s.judgment,
     })),
     agent_instructions:
-      'Follow steps in order. At each guardrail, stop and ask a human rather than deciding.',
+      'Follow the tutorial and steps in order. At each “when to stop” condition, ask a human rather than deciding alone.',
   };
 }

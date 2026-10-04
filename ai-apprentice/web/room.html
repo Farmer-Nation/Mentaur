@@ -62,14 +62,15 @@
       </div>
       <div class="coverage" id="coverageBox" style="display:none">
         <div class="cap">Knowledge coverage</div>
-        <div class="panel-help">Mentaur is checking for reasons and guardrails, not just clicks.</div>
+        <div class="panel-help">Mentaur is checking for reasons and when to stop, not just clicks.</div>
         <div id="coverageList"></div>
       </div>
 
       <div class="composer">
         <div class="tools" aria-label="Conversation controls">
-          <label class="toolchip"><input type="checkbox" id="micToggle"><span class="toggle-ui"></span> Voice input</label>
+          <span class="toolchip push-to-talk" id="pushToTalk" role="button" tabindex="0" aria-label="Hold space to talk">Hold Space to talk</span>
           <label class="toolchip"><input type="checkbox" id="ttsToggle" checked><span class="toggle-ui"></span> Speak replies</label>
+          <button class="toolchip stop-voice" id="stopVoiceBtn" type="button">■ Stop Mentaur</button>
           <label class="toolchip rec"><input type="checkbox" id="redactToggle"><span class="toggle-ui"></span> Redact PII</label>
         </div>
         <div class="row">
@@ -77,7 +78,7 @@
           <button class="iconbtn offrecord" id="offRecBtn" title="Keep the next answer off the record" aria-label="Keep next answer off the record">Private</button>
           <button class="iconbtn send" id="sendBtn" title="Send" aria-label="Send message">→</button>
         </div>
-        <div class="composer-hint"><span>Enter to send</span><span>Shift + Enter for a new line</span></div>
+        <div class="composer-hint"><span>Hold Space to talk · release to send</span><span>Enter to send text</span></div>
       </div>
     </aside>
   </main>

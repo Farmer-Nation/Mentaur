@@ -13,8 +13,8 @@ Branded as **Mentaur** and built for the Hack‑Nation × ElevenLabs challenge *
 - **Live session (both pages, synced).** The Guide works a task; the Student sees every action and the Guide's shared screen in real time. Either side can talk by **voice or text** at any moment.
 - **The AI paces itself.** It asks the Guide one question at a time, only after a pause — never a pile of questions at once, so an experienced (and busy) expert is never overwhelmed.
 - **The AI helps the Student ask.** Because a beginner often doesn't know what to ask, the Student gets 2–3 tappable suggested questions that update as the work unfolds; tapping one sends it to the Guide.
-- **Curriculum, shared.** When the Guide confirms the teach‑back, a curriculum is generated and appears on **both** pages: one lesson per step (what was done, why in the Guide's words, the guardrail, a judgment check), plus an agent‑ready JSON export.
-- **Practice, coached.** The Student works a case the Guide never showed. The AI steps in **before** a guardrail is broken, explaining it with the Guide's reasoning, and shows a mastery scorecard.
+- **Curriculum, shared.** When the Guide confirms the teach‑back, a curriculum is generated and appears on **both** pages: one lesson per step (what was done, why in the Guide's words, when to stop, and a judgment check), plus an agent‑ready JSON export.
+- **Practice, coached.** The Student works several cases the Guide never showed. The AI steps in **before** an unsafe choice, explaining it with the Guide's reasoning, and shows a mastery scorecard.
 - **Trust controls.** Off‑the‑record answers and PII redaction on both sides.
 
 ## Two APIs (with keyless fallback)
@@ -25,7 +25,7 @@ Branded as **Mentaur** and built for the Hack‑Nation × ElevenLabs challenge *
 | Screen → events + live questions | **Claude vision** (Haiku by default) | the sandbox ERP emits ground‑truth events |
 | Sandbox question phrasing + curriculum | **Claude** | deterministic templates |
 
-For the sandbox, deterministic triggers decide *when* there is something worth asking. For **any shared screen**, Claude analyzes the visible state and proposes the best grounded why/guardrail question. ElevenLabs voices replies when available. **No `npm install` and no keys required to run** — the server is pure Node built-ins + `fetch`.
+For the sandbox, deterministic triggers decide *when* there is something worth asking. For **any shared screen**, Claude analyzes the visible state and proposes the best grounded reason or "when to stop" question. ElevenLabs voices replies when available. **No `npm install` and no keys required to run** — the server is pure Node built-ins + `fetch`.
 
 ---
 
@@ -40,7 +40,7 @@ Open **http://localhost:8787** in Chrome.
 
 1. Click **Open a room** → you're the **Guide**. Copy the room code (top bar).
 2. In a second browser/tab/device, open the same URL, enter the code, **Join** → you're the **Student**.
-3. As the Guide, process the three invoices. Answer the apprentice's questions by voice or text. The Student watches live and can ask too.
+3. As the Guide, review the three inventory items and choose stock, reorder, or quarantine. Each item includes a count, condition, location, and receiving note. Answer the apprentice's questions by voice or text. The Student watches live and can ask too.
 4. When prompted, run the **debrief**, confirm the **teach‑back** → the **curriculum** appears on both pages.
 5. As the Student, click **Practice this now** and try the unseen case.
 
@@ -50,12 +50,51 @@ Run the brain tests: `npm test`. Two‑browser e2e: `node test/e2e.mjs` (needs P
 
 ### Going live (optional)
 
-```bash
-cp .env.example .env     # add ANTHROPIC_API_KEY and/or ELEVENLABS_* keys
+Create a local `.env` from the template and add the keys there. Do not put keys in
+`web/` or commit them to `.env.example`.
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+node --env-file=.env server/index.js
+```
+
+Set these values in `.env`:
+
+```dotenv
+# Enables Claude screen analysis, question phrasing, suggestions, and curriculum enrichment.
+ANTHROPIC_API_KEY=your_anthropic_key
+
+# Enables ElevenLabs spoken replies. The browser speech fallback remains available without it.
+ELEVENLABS_API_KEY=your_elevenlabs_key
+ELEVENLABS_VOICE_ID=EXAVITQu4vr4xnSDxMaL
+ELEVENLABS_TTS_MODEL=eleven_flash_v2_5
+
+# Optional: only needed for the ElevenLabs Conversational AI signed-url endpoint.
+ELEVENLABS_AGENT_ID=
+```
+
+The app reads these keys only on the Node server. The browser calls the local
+`/api/vision`, `/api/voice/tts`, and `/api/voice/signed-url` endpoints, so provider
+keys are never sent to the browser. You can run with only one provider:
+
+```powershell
+# Claude only: voice uses browser Web Speech
 node --env-file=.env server/index.js
 ```
 
 The top-bar mode pill shows the active paths, for example `claude/elevenlabs` or `mock/local`. With an Anthropic key, the Guide's **Share real screen** works with any visible desktop/browser task. The Guide gets a large self-preview in the main workspace while sharing. The browser samples screen activity locally every ~1.5 seconds, relays changed frames to the Student, and sends a compressed changed frame to Claude after a configurable throttle (4 seconds by default). Claude returns a chat-ready activity summary, events, a grounded Guide question, and Student question suggestions in the same call. Live summaries are persisted in the conversation at most once per minute; suggested questions can refresh more frequently from the latest compact screen state. If the learner stays quiet, Mentaur periodically asks the Guide a screen-grounded question and voices it with ElevenLabs when configured. The idle-question cadence also stays active when a non-demo tab is shared but a vision summary is temporarily unavailable. Use **Pause share / Resume share** to freeze screen relay and analysis, and **Pause questions / Resume questions** to disable or re-enable apprentice interruptions without ending the share.
+
+While Mentaur is speaking, turn on **Record Guide** and say “thank you Mentaur”
+(or “thanks mentor”) to interrupt playback. Student typed questions and suggested
+question buttons are spoken aloud on the connected pages. The same pause-gated
+planner is used for the simulation; Claude vision supplies the questions for a
+real shared screen.
+
+If a key was ever pasted into a committed or shared file, revoke it in the
+Anthropic/ElevenLabs dashboard and create a replacement before running the app.
 
 ---
 
@@ -82,7 +121,7 @@ server/
     planner.js        when/what to ask, coverage, teach eval        (pure, tested)
     workmap.js        events + Q&A -> Work Map + agent JSON          (pure, tested)
     redact.js         PII redaction                                  (pure, tested)
-    scenario.js       sandbox ERP invoices + the unseen practice case
+    scenario.js       sandbox inventory items, evidence notes, and the unseen practice case
     vision.js         arbitrary screen -> events/questions via Claude; one-image low-credit calls
     voice.js          ElevenLabs TTS first, graceful local-TTS fallback
 web/

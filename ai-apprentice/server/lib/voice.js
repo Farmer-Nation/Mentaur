@@ -10,13 +10,18 @@ const TTS_MODEL = process.env.ELEVENLABS_TTS_MODEL || 'eleven_flash_v2_5';
 
 export const voiceMode = KEY ? (AGENT_ID ? 'elevenlabs' : 'elevenlabs-tts') : 'local';
 
+async function providerError(prefix, response) {
+  const detail = (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 300);
+  return new Error(`${prefix} ${response.status}${detail ? `: ${detail}` : ''}`);
+}
+
 export async function getSignedUrl() {
   if (!KEY || !AGENT_ID) return null;
   const r = await fetch(
     `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${encodeURIComponent(AGENT_ID)}`,
     { headers: { 'xi-api-key': KEY } },
   );
-  if (!r.ok) throw new Error('signed url failed: ' + r.status);
+  if (!r.ok) throw await providerError('signed url failed:', r);
   const data = await r.json();
   return data.signed_url;
 }
@@ -25,7 +30,7 @@ export async function getSignedUrl() {
 export async function tts(text) {
   if (!KEY || !text) return null;
   try {
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_22050_32`, {
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_22050_32&optimize_streaming_latency=4`, {
       method: 'POST',
       headers: { 'xi-api-key': KEY, 'content-type': 'application/json', accept: 'audio/mpeg' },
       body: JSON.stringify({
@@ -34,7 +39,7 @@ export async function tts(text) {
         voice_settings: { stability: 0.4, similarity_boost: 0.8 },
       }),
     });
-    if (!r.ok) throw new Error('tts failed: ' + r.status);
+    if (!r.ok) throw await providerError('tts failed:', r);
     return Buffer.from(await r.arrayBuffer());
   } catch (e) {
     console.warn('[voice] ElevenLabs unavailable; client will use local TTS:', e.message);

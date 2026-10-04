@@ -6,10 +6,10 @@
 // the Guide's behalf.
 
 import crypto from 'node:crypto';
-import { captureInvoices, teachInvoice } from './scenario.js';
+import { simpleDemoInvoices, teachInventoryCases } from './scenario.js';
 import * as planner from './planner.js';
 import { buildWorkMap, toAgentJSON } from './workmap.js';
-import { phraseGuideQuestion, studentSuggestions, idleGuideQuestion, buildCurriculum, practiceFeedback } from './reasoning.js';
+import { phraseGuideQuestion, studentSuggestions, idleGuideQuestion, buildCurriculum, practiceFeedback, summarizeAnswer, generateDebriefQuestions, answerStudentQuestion } from './reasoning.js';
 
 const rooms = new Map(); // code -> room
 const subs = new Map(); // code -> Set<{res, role, id}>
@@ -20,6 +20,7 @@ const SUMMARY_MIN_MS = Math.max(60000, Number(process.env.ACTIVITY_SUMMARY_INTER
 const SUGGESTION_REFRESH_MS = Math.max(3000, Number(process.env.SUGGESTION_REFRESH_MS) || 6000);
 const IDLE_QUESTION_MS = Math.max(8000, Number(process.env.IDLE_QUESTION_MS) || 15000);
 const IDLE_QUESTION_COOLDOWN_MS = Math.max(8000, Number(process.env.IDLE_QUESTION_COOLDOWN_MS) || 18000);
+const QUESTION_REPEAT_MS = 60000;
 
 function code4() {
   const s = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -31,15 +32,16 @@ export function createRoom() {
   let code; do { code = code4(); } while (rooms.has(code));
   const room = {
     code, created: Date.now(), phase: 'capture',
-    invoices: captureInvoices(), events: [], qa: [], chat: [],
+    invoices: simpleDemoInvoices(), events: [], qa: [], chat: [],
     suggestions: [], workMap: [], curriculum: null,
     pending: null, queued: null, askedKeys: new Set(),
     lastActivity: 0, typing: false, speaking: false,
     debriefQ: null, debriefIdx: -1,
-    practice: {}, latestFrame: null, redact: false,
+    practice: {}, practiceCompleted: new Set(), latestFrame: null, redact: false,
     screenSummary: '', lastVisionQuestion: null, lastActivitySummary: '', lastSummaryAt: -Infinity,
     questionsPaused: false, shareState: { sharing: false, paused: false },
     lastStudentQuestionAt: 0, lastQuestionAt: 0, lastQuestionAttemptAt: 0,
+    ackUntil: 0,
     lastSuggestionsAt: -Infinity, suggestionsBusy: false, idleQuestionBusy: false,
     guidePresent: false, students: 0,
   };
@@ -101,7 +103,9 @@ export function applyChange(room, { invId, trigger, cc, action }) {
   if (trigger === 'cc') { const from = inv.cc || '(empty)'; inv.cc = cc; pushEvent(room, `${invId} cost center changed ${from} -> ${cc}`); }
   if (trigger === 'action') {
     inv.action = action;
-    const label = { approve: 'approved & posted', hold: 'held', escalate: 'sent for 2nd approval' }[action];
+    const label = inv.category === 'inventory'
+      ? { approve: 'put into stock', hold: 'quarantined', escalate: 'reorder queued' }[action]
+      : { approve: 'approved & posted', hold: 'held', escalate: 'sent for 2nd approval' }[action];
     pushEvent(room, `${invId} ${label}`);
   }
   reportActivity(room, { typing: false });
@@ -202,7 +206,7 @@ async function refreshSuggestions(room) {
 }
 
 // ---- chat: either side can speak/type ----
-export function postChat(room, { from, text, to }) {
+export async function postChat(room, { from, text, to }) {
   const msg = { from, text, t: now(room) };
   room.chat.push(msg);
   broadcast(room, { type: 'chat', msg });
@@ -212,6 +216,18 @@ export function postChat(room, { from, text, to }) {
     room.lastStudentQuestionAt = now(room);
     room.qa.push({ q: `(student) ${text}`, a: null, invId: null, stepKey: 'student_q', guardrail: false, t: now(room) });
     refreshSuggestions(room);
+    // During capture the Guide owns the explanation. Mentaur only speaks on
+    // the Guide's behalf after the Work Map has been completed for practice.
+    if (room.phase === 'practice') {
+      let answer;
+      try {
+        answer = await answerStudentQuestion(room, text);
+      } catch (err) {
+        console.warn(`[reasoning] student answer unavailable: ${err.message}`);
+        answer = 'Use the Work Map evidence first, then ask a human if the condition or count is unclear.';
+      }
+      broadcast(room, { type: 'chat', msg: { from: 'agent', text: answer, t: now(room) } });
+    }
     return;
   }
   if (from === 'guide') {
@@ -220,8 +236,20 @@ export function postChat(room, { from, text, to }) {
       const q = room.pending;
       room.qa.push({ q: q.q, a: text, invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
       room.pending = null;
-      broadcast(room, { type: 'ack', guardrail: q.guardrail, coverage: planner.coverage(room.invoices, room.qa) });
+      room.ackUntil = now(room) + 3500;
+      let idea;
+      try {
+        idea = await summarizeAnswer(room, q.q, text);
+      } catch (err) {
+        console.warn(`[reasoning] answer summary unavailable: ${err.message}`);
+        idea = `Got it — thanks for explaining.`;
+      }
+      broadcast(room, {
+        type: 'ack', guardrail: q.guardrail, coverage: planner.coverage(room.invoices, room.qa),
+        spoken: idea,
+      });
       if (room.phase === 'debrief') nextDebrief(room);
+      else maybeOfferDebrief(room);
     } else {
       // guide answering a student's open question → attach to the latest student_q
       const open = [...room.qa].reverse().find((x) => x.stepKey === 'student_q' && x.a === null);
@@ -237,14 +265,15 @@ export function setOffRecord(room, on) { room.offRecord = on; }
 
 // ---- debrief + teach-back (AI with the guide) ----
 function maybeOfferDebrief(room) {
-  if (room.invoices.every((i) => i.action) && room.phase === 'capture' && !room._debriefOffered) {
+  if (room.invoices.every((i) => i.action) && room.phase === 'capture' &&
+      !room.pending && !room.queued && !room._debriefOffered) {
     room._debriefOffered = true;
     broadcast(room, { type: 'debrief_ready' });
   }
 }
-export function startDebrief(room) {
+export async function startDebrief(room) {
   room.phase = 'debrief';
-  room.debriefQ = planner.debriefQuestions(room.invoices, room.qa);
+  room.debriefQ = await generateDebriefQuestions(room, planner.debriefQuestions(room.invoices, room.qa));
   room.debriefIdx = -1;
   broadcast(room, { type: 'phase', phase: 'debrief' });
   nextDebrief(room);
@@ -257,7 +286,7 @@ function nextDebrief(room) {
     return;
   }
   const q = room.debriefQ[room.debriefIdx];
-  room.pending = { ...q, debrief: true };
+  room.pending = { ...q, debrief: true, askedAt: now(room), repeatCount: 0 };
   broadcast(room, { type: 'ask', question: q.q, guardrail: q.guardrail, progress: { i: room.debriefIdx + 1, n: room.debriefQ.length } });
 }
 export async function confirmTeachback(room) {
@@ -273,7 +302,8 @@ export function agentJSON(room) { return toAgentJSON(room); }
 // ---- practice (student, AI coaches on guide's behalf) ----
 export function startPractice(room, studentId = 's') {
   room.phase = 'practice';
-  room.practice[studentId] = { inv: teachInvoice(), caught: false, score: [] };
+  const caseIndex = room.practice[studentId]?.caseIndex == null ? 0 : (room.practice[studentId].caseIndex + 1) % teachInventoryCases().length;
+  room.practice[studentId] = { inv: teachInventoryCases()[caseIndex], caseIndex, caught: false, score: [] };
   broadcast(room, { type: 'phase', phase: 'practice' });
   return room.practice[studentId];
 }
@@ -281,6 +311,7 @@ export async function practiceAttempt(room, { studentId = 's', cc, action }) {
   const p = room.practice[studentId] || startPractice(room, studentId);
   p.inv.cc = cc;
   let verdict = planner.evaluateTeachDecision(p.inv, { cc });
+  verdict = { ...verdict, inv: p.inv };
   if (!verdict.ok && !p.caught) {
     p.caught = true;
     verdict = await practiceFeedback(room, verdict);
@@ -294,8 +325,12 @@ export async function practiceAttempt(room, { studentId = 's', cc, action }) {
     note: p.caught ? 'Fixed the cost center to capex (0400) after the coach flagged it.' : verdict.scoreNote,
   });
   p.inv.action = action;
-  broadcast(room, { type: 'practice_done', studentId, score: p.score });
-  return { outcome: 'done', score: p.score };
+  const totalCases = teachInventoryCases().length;
+  room.practiceCompleted.add(p.caseIndex);
+  const completedCases = room.practiceCompleted.size;
+  const allComplete = completedCases >= totalCases;
+  broadcast(room, { type: 'practice_done', studentId, score: p.score, caseIndex: p.caseIndex, completedCases, totalCases, allComplete });
+  return { outcome: 'done', score: p.score, caseIndex: p.caseIndex, completedCases, totalCases, allComplete };
 }
 
 // ---- background watcher: paces the AI's questions + live learner prompts ----
@@ -344,15 +379,25 @@ export function startWatcher() {
       if (shouldRefreshSuggestions(room, at)) refreshSuggestions(room);
       if (shouldQueueIdleQuestion(room, at)) queueIdleQuestion(room, at);
 
-      if (planner.shouldSpeak(room, at)) {
+      if (at >= room.ackUntil && planner.shouldSpeak(room, at)) {
         const cand = room.queued; room.queued = null;
         const phrased = await phraseGuideQuestion(room, cand).catch(() => cand);
         if (!phrased || !phrased.q) continue;
-        room.pending = phrased; room.askedKeys.add(cand.key); room.lastQuestionAt = now(room);
+        room.pending = { ...phrased, askedAt: now(room), repeatCount: 0 };
+        room.askedKeys.add(cand.key); room.lastQuestionAt = now(room);
         broadcast(room, { type: 'ask', question: phrased.q, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId });
+      }
+      if (room.pending && !room.speaking && at - (room.pending.askedAt || 0) >= QUESTION_REPEAT_MS) {
+        room.pending.askedAt = at;
+        room.pending.repeatCount = (room.pending.repeatCount || 0) + 1;
+        broadcast(room, {
+          type: 'ask', question: room.pending.q, guardrail: room.pending.guardrail,
+          stepKey: room.pending.stepKey, invId: room.pending.invId,
+          repeat: true, repeatCount: room.pending.repeatCount,
+        });
       }
     }
   }, 400);
 }
 
-export const liveCadence = { SUMMARY_MIN_MS, SUGGESTION_REFRESH_MS, IDLE_QUESTION_MS, IDLE_QUESTION_COOLDOWN_MS };
+export const liveCadence = { SUMMARY_MIN_MS, SUGGESTION_REFRESH_MS, IDLE_QUESTION_MS, IDLE_QUESTION_COOLDOWN_MS, QUESTION_REPEAT_MS };
