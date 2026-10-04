@@ -8,8 +8,8 @@ const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'con
 
 const params = new URLSearchParams(location.search);
 const CODE = (params.get('code') || '').toUpperCase();
-const ROLE = params.get('role') === 'guide' ? 'guide' : 'student';
-const isGuide = ROLE === 'guide';
+let ROLE = null;
+let isGuide = false;
 
 const S = {
   started: Date.now(), phase: 'capture', invoices: [], selected: null,
@@ -256,7 +256,7 @@ async function redactSharedCanvas(canvas) {
    SSE — the room talks to both roles here
    ============================================================ */
 function connect() {
-  const es = new EventSource(`/api/room/${CODE}/stream?role=${ROLE}`);
+  const es = new EventSource(`/api/room/${CODE}/stream`);
   es.onmessage = (m) => {
     const d = JSON.parse(m.data);
     switch (d.type) {
@@ -364,18 +364,30 @@ function onChat(msg, { speakStudentQuestion = true, speakAgent = true } = {}) {
    boot
    ============================================================ */
 async function boot() {
-  S.config = await api('/api/config');
+  if (!CODE) return location.href = '/';
+  const [config, me] = await Promise.all([api('/api/config'), api('/api/auth/me')]);
+  if (!me.authenticated) return location.href = '/';
+  ROLE = me.user.role === 'teacher' ? 'guide' : 'student';
+  isGuide = ROLE === 'guide';
+  if (!isGuide) {
+    const joined = await api(`/api/room/${CODE}/join`, {});
+    if (joined.error) { $('#surface').innerHTML = `<div class="intro"><h3>Unable to join room</h3><p>${joined.error} <a href="/">Return to dashboard</a>.</p></div>`; return; }
+  }
+
+  S.config = config;
   S.costCenters = S.config.costCenters;
   $('#modePill').textContent = `${S.config.visionMode}/${S.config.voiceMode}`;
   $('#roomCode').textContent = CODE;
-  $('#roomCode').onclick = () => { navigator.clipboard?.writeText(`${location.origin}/room.html?code=${CODE}&role=student`); toast('Student invite link copied'); };
-  $('#roleSub').textContent = isGuide ? 'Guide · Mentaur is learning from you' : 'Student · Mentaur is coaching you';
+  $('#roomCode').onclick = () => { navigator.clipboard?.writeText(`${location.origin}/room.html?code=${CODE}`); toast('Learner invite link copied'); };
+  $('#roleSub').textContent = isGuide ? 'Teacher · Mentaur is learning from you' : 'Learner · Mentaur is coaching you';
   $('#agentName').textContent = 'Apprentice';
-  $('#replyBox').placeholder = isGuide ? 'Answer Mentaur or add context…' : 'Ask Mentaur or the Guide…';
+  $('#replyBox').placeholder = isGuide ? 'Answer Mentaur or add context…' : 'Ask Mentaur or your Teacher…';
+  $('#offRecBtn').style.display = isGuide ? '' : 'none';
+  $('#redactToggle').closest('label').style.display = isGuide ? '' : 'none';
   S.recog = initMic();
 
   const view = await api(`/api/room/${CODE}`);
-  if (view.error) { $('#surface').innerHTML = `<div class="intro"><h3>Room not found</h3><p>The code <b>${CODE}</b> isn’t active. <a href="/">Go back</a> and check it.</p></div>`; return; }
+  if (view.error) { $('#surface').innerHTML = `<div class="intro"><h3>Room unavailable</h3><p>${view.error} <a href="/">Return to dashboard</a>.</p></div>`; return; }
   S.invoices = view.invoices; S.phase = view.phase; S.curriculum = view.curriculum; S.workMap = view.workMap;
   S.questionsPaused = !!view.controls?.questionsPaused; S.sharePaused = !!view.controls?.shareState?.paused; S.sharing = !!view.controls?.shareState?.sharing;
   S.guideLanguage = view.guideLanguage || 'en';
@@ -530,6 +542,7 @@ function onShareState(d) {
 }
 
 async function shareScreen() {
+  if (!isGuide) return;
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
     S.shareStream = stream; S.sharing = true; S.sharePaused = false; S.lastVisualFingerprint = null; S.visionDirty = true; S.lastVisionSentAt = 0;
@@ -803,7 +816,7 @@ function onPracticeDone(d) {
 }
 
 /* ---------- presence / phase chrome ---------- */
-function renderPresence(pr) { $('#presence').innerHTML = `<span class="dotp ${pr.guide ? 'on' : ''}"></span>Guide <span class="dotp ${pr.students ? 'on' : ''}" style="margin-left:10px"></span>${pr.students} student${pr.students === 1 ? '' : 's'}`; }
+function renderPresence(pr) { $('#presence').innerHTML = `<span class="dotp ${pr.guide ? 'on' : ''}"></span>Teacher <span class="dotp ${pr.students ? 'on' : ''}" style="margin-left:10px"></span>${pr.students} learner${pr.students === 1 ? '' : 's'}`; }
 function setPhase(p) { const order = ['capture', 'curriculum', 'practice']; document.querySelectorAll('.phase').forEach((ph) => { ph.classList.remove('active', 'done'); const name = ph.dataset.phase === 'capture' ? 'capture' : ph.dataset.phase; if (name === p || (p === 'teachback' && name === 'capture') || (p === 'debrief' && name === 'capture')) ph.classList.add('active'); if (order.indexOf(name) < order.indexOf(p)) ph.classList.add('done'); }); }
 
 /* ---------- composer (both roles) ---------- */
@@ -847,6 +860,7 @@ $('#redactToggle').addEventListener('change', async (e) => { S.redact = e.target
 $('#offRecBtn').addEventListener('click', () => { S.offRecord = !S.offRecord; $('#offRecBtn').classList.toggle('on', S.offRecord); toast(S.offRecord ? 'Next answer off the record' : 'Back on the record'); });
 $('#stopVoiceBtn').addEventListener('click', () => stopSpeech());
 $('#exportPdfBtn').addEventListener('click', exportConversationPdf);
+$('#roomLogout')?.addEventListener('click', async () => { await api('/api/auth/logout', {}); location.href = '/'; });
 
 /* ---------- PDF export ---------- */
 function exportConversationPdf() {
@@ -893,7 +907,7 @@ function exportConversationPdf() {
 </style></head>
 <body>
   <h1>Mentaur — Conversation export</h1>
-  <div class="meta">Room ${CODE} · ${isGuide ? 'Guide' : 'Student'} view · Session length ${duration} · Generated ${generatedAt}</div>
+  <div class="meta">Room ${CODE} · ${isGuide ? 'Teacher' : 'Learner'} view · Session length ${duration} · Generated ${generatedAt}</div>
   <h2>Conversation</h2>
   <div class="pdf-transcript">${transcriptHtml}</div>
   ${curriculumHtml}

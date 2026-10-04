@@ -30,10 +30,11 @@ function code4() {
 }
 function now(room) { return room.created ? Date.now() - room.created : 0; }
 
-export function createRoom() {
+export function createRoom({ teacherId = null, teacherName = '' } = {}) {
   let code; do { code = code4(); } while (rooms.has(code));
   const room = {
     code, created: Date.now(), phase: 'capture',
+    teacherId, teacherName, sessionId: null, joinedLearners: new Set(),
     invoices: simpleDemoInvoices(), events: [], qa: [], chat: [],
     suggestions: [], workMap: [], curriculum: null,
     captureMode: 'simulation',
@@ -54,6 +55,7 @@ export function createRoom() {
   return code;
 }
 export function getRoom(code) { return rooms.get(code); }
+export function addLearner(room, userId) { if (room && userId) room.joinedLearners.add(userId); }
 
 export function roomView(room) {
   return {
@@ -277,18 +279,21 @@ export async function postChat(room, { from, text, to }) {
     const safeStudentText = redactText(studentText, room.redact);
     const msg = { from, text: safeText, guideText: safeGuideText, studentText: safeStudentText, t: now(room) };
     if (lang !== 'en') msg.original = text;
-    room.chat.push(msg);
-    broadcast(room, { type: 'chat', msg });
+    const offRecord = !!room.offRecord;
+    room.offRecord = false; // applies to exactly one teacher message
+    if (!offRecord) room.chat.push(msg);
+    broadcast(room, { type: 'chat', msg: offRecord ? { ...msg, offRecord: true } : msg });
 
-    // guide speaking: if answering the AI's pending question, capture it
+    // Teacher speaking: if answering the AI's pending question, capture it unless
+    // this answer was explicitly marked off the record.
     if (room.pending) {
       const q = room.pending;
-      room.qa.push({ q: q.q, a: redactText(textEn, room.redact), invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
+      if (!offRecord) room.qa.push({ q: q.q, a: redactText(textEn, room.redact), invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
       room.pending = null;
       room.ackUntil = now(room) + 3500;
       let idea;
       try {
-        idea = await summarizeAnswer(room, q.q, textEn);
+        idea = offRecord ? `Got it — I won't save that answer.` : await summarizeAnswer(room, q.q, textEn);
       } catch (err) {
         console.warn(`[reasoning] answer summary unavailable: ${err.message}`);
         idea = `Got it — thanks for explaining.`;
@@ -306,7 +311,7 @@ export async function postChat(room, { from, text, to }) {
     } else {
       // guide answering a student's open question → attach to the latest student_q
       const open = [...room.qa].reverse().find((x) => x.stepKey === 'student_q' && x.a === null);
-      if (open) open.a = textEn;
+      if (open && !offRecord) open.a = textEn;
     }
     refreshSuggestions(room);
   }

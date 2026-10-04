@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E0000">
+<title>Mentaur — Knowledge Base</title>
+<link rel="icon" href="/mentaur-logo.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="kb-page">
+<header class="kb-topbar">
+  <a class="brand" href="/" aria-label="Mentaur home">
+    <div class="logo-frame logo-frame--nav"><img src="/mentaur-logo.png" alt="Mentaur"></div>
+    <div class="brand-product"><strong>Knowledge Base</strong><span id="kbRole">Loading account…</span></div>
+  </a>
+  <div class="spacer"></div>
+  <a class="btn ghost" href="/">Dashboard</a>
+  <button class="btn ghost" id="kbLogout">Sign out</button>
+</header>
+
+<main class="kb-shell">
+  <section class="kb-hero">
+    <div class="eyebrow dark"><span class="spark"></span> Persistent learning</div>
+    <h1 id="kbTitle">Your knowledge base</h1>
+    <p id="kbIntro">Loading…</p>
+  </section>
+
+  <section id="learnerKb" class="kb-chat-card hidden">
+    <div class="kb-chat-head">
+      <div><h2>Ask your teachers</h2><p>Claude answers from saved sessions with teachers you actually joined.</p></div>
+      <span class="pill" id="kbMode">Supabase + Claude</span>
+    </div>
+    <div class="kb-messages" id="kbMessages">
+      <div class="kb-empty">Ask about a process, decision, exception, or guardrail from a prior teaching session.</div>
+    </div>
+    <div class="kb-composer">
+      <button class="kb-mic" id="kbMic" type="button" title="Speak a question" aria-label="Speak a question">●</button>
+      <textarea id="kbQuestion" rows="2" placeholder="e.g. When should I quarantine damaged inventory?"></textarea>
+      <button class="btn primary" id="kbAsk">Ask</button>
+    </div>
+    <div class="kb-credit-note">Voice input uses your browser. ElevenLabs is called only when you choose “Listen,” reducing voice credits.</div>
+  </section>
+
+  <section id="teacherKb" class="kb-library hidden">
+    <div class="kb-library-head"><div><h2>Saved teaching sessions</h2><p>Each completed room is archived and indexed into your private Supabase knowledge base.</p></div><a class="btn primary" href="/">Start another session</a></div>
+    <div id="teacherSessions" class="kb-session-list"></div>
+  </section>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="/knowledge.js"></script>
+</body>
+</html>

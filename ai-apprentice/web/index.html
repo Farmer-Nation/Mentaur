@@ -14,76 +14,89 @@
 <body class="landing">
 <div class="ambient ambient-a" aria-hidden="true"></div>
 <div class="ambient ambient-b" aria-hidden="true"></div>
-<main class="land-wrap">
+<main class="land-wrap auth-land">
   <header class="land-brand">
     <div class="logo-frame logo-frame--hero"><img src="/mentaur-logo.png" alt="Mentaur"></div>
     <div class="eyebrow"><span class="spark"></span> AI Apprentice</div>
     <h1>Learn how the work<br><span>really</span> gets done.</h1>
-    <p class="tag">Mentaur captures expert judgment while it happens, turns it into a usable work map, then coaches the next person through it.</p>
+    <p class="tag">Teachers capture judgment while they work. Learners join live, ask questions, then keep access to a private knowledge base built only from teachers they have actually learned from.</p>
   </header>
 
   <section class="flow-rail" aria-label="How Mentaur works">
-    <div class="flow-step active"><span>01</span><div><b>Capture</b><small>Work naturally. Mentaur asks why at the right moments.</small></div></div>
+    <div class="flow-step active"><span>01</span><div><b>Capture</b><small>Teachers screen-share and explain decisions.</small></div></div>
     <div class="flow-line"></div>
-    <div class="flow-step"><span>02</span><div><b>Map</b><small>Decisions, reasons and guardrails become a shared playbook.</small></div></div>
+    <div class="flow-step"><span>02</span><div><b>Remember</b><small>Supabase stores the session knowledge securely.</small></div></div>
     <div class="flow-line"></div>
-    <div class="flow-step"><span>03</span><div><b>Teach</b><small>A learner practices while Mentaur coaches before mistakes happen.</small></div></div>
+    <div class="flow-step"><span>03</span><div><b>Ask</b><small>Learners query their combined teacher knowledge with Claude.</small></div></div>
   </section>
 
-  <section class="land-cards" aria-label="Choose your role">
-    <article class="land-card guide">
+  <section id="authView" class="auth-grid hidden" aria-label="Account access">
+    <article class="land-card guide auth-card">
       <div class="card-accent"></div>
-      <div class="role-eyebrow">I know the work</div>
-      <h2>Open a Guide room</h2>
-      <p>Do a real task and explain only what matters. Mentaur watches the workflow, waits for natural pauses, and captures the judgment behind each step.</p>
-      <button class="btn primary big" id="startGuide"><span>Start capturing</span><span class="arrow">→</span></button>
-      <div class="microcopy">You’ll get a room code to share with a learner.</div>
+      <div class="role-eyebrow">Existing account</div>
+      <h2>Sign in</h2>
+      <form id="loginForm" class="auth-form">
+        <label>Email<input id="loginEmail" type="email" autocomplete="email" required></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required></label>
+        <button class="btn primary big" type="submit"><span>Sign in</span><span class="arrow">→</span></button>
+      </form>
+      <div class="form-status" id="loginStatus"></div>
     </article>
 
-    <article class="land-card student">
+    <article class="land-card student auth-card">
       <div class="card-accent"></div>
-      <div class="role-eyebrow">I’m learning</div>
-      <h2>Join as a Student</h2>
-      <p>Follow the Guide live, ask questions when you need context, then practice the same judgment on a new case with coaching.</p>
+      <div class="role-eyebrow">New account</div>
+      <h2>Create account</h2>
+      <form id="signupForm" class="auth-form">
+        <label>Name<input id="signupName" type="text" autocomplete="name" maxlength="120" required></label>
+        <label>Email<input id="signupEmail" type="email" autocomplete="email" required></label>
+        <label>Password<input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <fieldset class="role-choice">
+          <legend>Account type</legend>
+          <label><input type="radio" name="role" value="teacher" required><span><b>Teacher</b><small>Can create and screen-share teaching sessions.</small></span></label>
+          <label><input type="radio" name="role" value="learner" required><span><b>Learner</b><small>Can join sessions and ask the knowledge base.</small></span></label>
+        </fieldset>
+        <button class="btn big" type="submit"><span>Create account</span><span class="arrow">→</span></button>
+      </form>
+      <div class="form-status" id="signupStatus"></div>
+    </article>
+  </section>
+
+  <section id="dashboardView" class="dashboard hidden" aria-label="Mentaur dashboard">
+    <div class="dashboard-head">
+      <div><div class="role-eyebrow" id="dashRole">Account</div><h2 id="dashGreeting">Welcome</h2><p id="dashCopy"></p></div>
+      <div class="dash-actions"><a class="btn" href="/knowledge.html">Knowledge base</a><button class="btn ghost" id="logoutBtn">Sign out</button></div>
+    </div>
+
+    <div id="teacherDash" class="land-card guide dashboard-card hidden">
+      <div class="card-accent"></div>
+      <div class="role-eyebrow">Teacher workspace</div>
+      <h2>Start a teaching session</h2>
+      <p>Only teacher accounts can create rooms or share a screen. Mentaur captures the session into your Supabase-backed knowledge base.</p>
+      <button class="btn primary big" id="startTeacher"><span>Start session</span><span class="arrow">→</span></button>
+      <div class="microcopy">A five-character room code will be created for your learner.</div>
+    </div>
+
+    <div id="learnerDash" class="land-card student dashboard-card hidden">
+      <div class="card-accent"></div>
+      <div class="role-eyebrow">Learner workspace</div>
+      <h2>Join a teacher</h2>
+      <p>Enter the room code from your teacher. Once you join, that teacher’s saved session knowledge becomes part of your combined knowledge base.</p>
       <label class="join-label" for="joinCode">Room code</label>
       <div class="join-row">
         <input type="text" id="joinCode" placeholder="ABCDE" maxlength="5" autocomplete="off" spellcheck="false" aria-label="Room code">
-        <button class="btn big" id="joinStudent"><span>Join room</span><span class="arrow">→</span></button>
+        <button class="btn big" id="joinLearner"><span>Join room</span><span class="arrow">→</span></button>
       </div>
-      <div class="microcopy">Five characters from your Guide.</div>
-    </article>
+      <div class="form-status" id="joinStatus"></div>
+      <a class="kb-inline" href="/knowledge.html">Ask your combined teacher knowledge base →</a>
+    </div>
   </section>
 
   <footer class="land-foot">
     <span class="provider-dot"></span><span class="mono" id="modeFoot">checking providers…</span>
-    <span class="foot-note">Built for live knowledge transfer, not passive recording.</span>
+    <span class="foot-note">Role permissions are enforced on the server.</span>
   </footer>
 </main>
-<script type="module">
-  const cfg = await fetch('/api/config').then(r => r.json());
-  const mode = `${cfg.visionMode} vision · ${cfg.voiceMode} voice · ${cfg.reasoningMode} reasoning`;
-  document.getElementById('modeFoot').textContent = mode +
-    (cfg.visionMode === 'mock' && cfg.voiceMode === 'mock' ? ' · keyless demo ready' : '');
-
-  const start = document.getElementById('startGuide');
-  start.onclick = async () => {
-    start.disabled = true;
-    start.querySelector('span').textContent = 'Opening room…';
-    const { code } = await fetch('/api/room', { method: 'POST' }).then(r => r.json());
-    location.href = `/room.html?code=${code}&role=guide`;
-  };
-
-  const join = () => {
-    const code = document.getElementById('joinCode').value.trim().toUpperCase();
-    if (code.length === 5) location.href = `/room.html?code=${code}&role=student`;
-    else document.getElementById('joinCode').classList.add('shake');
-  };
-  document.getElementById('joinStudent').onclick = join;
-  document.getElementById('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
-  document.getElementById('joinCode').addEventListener('input', e => {
-    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
-    e.target.classList.remove('shake');
-  });
-</script>
+<script type="module" src="/dashboard.js"></script>
 </body>
 </html>

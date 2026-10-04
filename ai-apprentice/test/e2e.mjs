@@ -1,4 +1,21 @@
 import { chromium } from 'playwright';
+const teacherEmail = process.env.E2E_TEACHER_EMAIL;
+const teacherPassword = process.env.E2E_TEACHER_PASSWORD;
+const learnerEmail = process.env.E2E_LEARNER_EMAIL;
+const learnerPassword = process.env.E2E_LEARNER_PASSWORD;
+if (!teacherEmail || !teacherPassword || !learnerEmail || !learnerPassword) {
+  throw new Error('Set E2E_TEACHER_EMAIL, E2E_TEACHER_PASSWORD, E2E_LEARNER_EMAIL, and E2E_LEARNER_PASSWORD to existing Supabase test accounts.');
+}
+
+async function login(page, email, password) {
+  await page.goto('http://localhost:8787');
+  await page.waitForSelector('#loginForm');
+  await page.fill('#loginEmail', email);
+  await page.fill('#loginPassword', password);
+  await page.click('#loginForm button[type="submit"]');
+  await page.waitForSelector('#dashboardView:not(.hidden)', { timeout: 10000 });
+}
+
 const launchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
   ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
   : {};
@@ -9,8 +26,8 @@ const mkpage = async (ctx, tag) => { const p = await ctx.newPage(); p.on('pageer
 // --- Guide opens a room ---
 const gctx = await b.newContext({ viewport:{width:1180,height:820} });
 const guide = await mkpage(gctx, 'G');
-await guide.goto('http://localhost:8787');
-await guide.click('#startGuide');
+await login(guide, teacherEmail, teacherPassword);
+await guide.click('#startTeacher');
 await guide.waitForURL(/room\.html\?code=/);
 await guide.waitForSelector('#queue');
 const url = guide.url();
@@ -20,9 +37,9 @@ console.log('Room code:', code);
 // --- Student joins same room ---
 const sctx = await b.newContext({ viewport:{width:1180,height:820} });
 const student = await mkpage(sctx, 'S');
-await student.goto('http://localhost:8787');
+await login(student, learnerEmail, learnerPassword);
 await student.fill('#joinCode', code);
-await student.click('#joinStudent');
+await student.click('#joinLearner');
 await student.waitForURL(/room\.html\?code=/);
 await student.waitForSelector('#mirror', { timeout: 6000 });
 await guide.waitForTimeout(600);

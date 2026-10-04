@@ -7,6 +7,8 @@ import { buildWorkMap, toAgentJSON } from '../server/lib/workmap.js';
 import { redactText } from '../server/lib/redact.js';
 import { captureInvoices, teachInvoice } from '../server/lib/scenario.js';
 import * as rooms from '../server/lib/room.js';
+import { canAccessRoom, canPerformRoomAction, roleForProfile } from '../server/lib/authz.js';
+import { buildKnowledgeChunks } from '../server/lib/knowledge.js';
 
 let pass = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log('  ✓ ' + name); } catch (e) { console.error('  ✗ ' + name + '\n    ' + e.message); process.exitCode = 1; } };
@@ -150,6 +152,41 @@ t('agent JSON has instructions + steps', () => {
   const invoices = captureInvoices().map((i) => ({ ...i, cc: i.truth.cc, action: i.truth.action }));
   const json = toAgentJSON({ invoices, qa: [], events: [] });
   assert.ok(json.agent_instructions && json.steps.length === 3);
+});
+
+
+console.log('\nauthz — account roles');
+t('teacher owns room and learner must explicitly join', () => {
+  const code = rooms.createRoom({ teacherId: 'teacher-1', teacherName: 'T' }); const room = rooms.getRoom(code);
+  const teacher = { user: { id: 'teacher-1' }, profile: { role: 'teacher' } };
+  const learner = { user: { id: 'learner-1' }, profile: { role: 'learner' } };
+  assert.strictEqual(roleForProfile(teacher.profile), 'guide');
+  assert.strictEqual(canAccessRoom(teacher, room), true);
+  assert.strictEqual(canAccessRoom(learner, room), false);
+  rooms.addLearner(room, 'learner-1');
+  assert.strictEqual(canAccessRoom(learner, room), true);
+});
+t('only teacher can invoke screen-share control actions', () => {
+  const code = rooms.createRoom({ teacherId: 'teacher-2' }); const room = rooms.getRoom(code); rooms.addLearner(room, 'learner-2');
+  const teacher = { user: { id: 'teacher-2' }, profile: { role: 'teacher' } };
+  const learner = { user: { id: 'learner-2' }, profile: { role: 'learner' } };
+  assert.strictEqual(canPerformRoomAction(teacher, room, 'share-state'), true);
+  assert.strictEqual(canPerformRoomAction(learner, room, 'share-state'), false);
+  assert.strictEqual(canPerformRoomAction(learner, room, 'chat'), true);
+});
+
+console.log('\nknowledge — persistence payload');
+t('search chunks include session knowledge but never raw shared frames', () => {
+  const code = rooms.createRoom({ teacherId: 'teacher-kb' }); const room = rooms.getRoom(code);
+  room.screenSummary = 'Inventory app | Reviewing damaged units';
+  room.events.push({ text: 'Teacher quarantined dented units', kind: 'decision' });
+  room.chat.push({ from: 'guide', text: 'Quarantine when packaging is compromised.' });
+  room.qa.push({ q: 'When should I stop?', a: 'Stop if identity labels are unreadable.' });
+  room.latestFrame = 'data:image/jpeg;base64,SHOULD_NOT_BE_INDEXED';
+  const chunks = buildKnowledgeChunks(room);
+  const all = JSON.stringify(chunks);
+  assert.match(all, /quarantine/i);
+  assert.ok(!all.includes('SHOULD_NOT_BE_INDEXED'));
 });
 
 console.log('\nredaction');
