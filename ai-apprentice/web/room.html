@@ -53,6 +53,7 @@
         </div>
       </div>
 
+      <div id="printHeader" class="print-only"></div>
       <div class="transcript" id="transcript" aria-live="polite"></div>
 
       <div class="suggestions" id="suggestions" style="display:none">
@@ -75,7 +76,13 @@
         <div class="row">
           <textarea id="replyBox" placeholder="Reply to Mentaur…" rows="1" aria-label="Message Mentaur"></textarea>
           <button class="iconbtn offrecord" id="offRecBtn" title="Keep the next answer off the record" aria-label="Keep next answer off the record">Private</button>
-          <button class="iconbtn send" id="sendBtn" title="Send" aria-label="Send message">→</button>
+          <div class="send-stack">
+            <div class="share-row">
+              <button class="iconbtn sharebtn" id="exportPdfBtn" title="Download this session as a PDF" aria-label="Download session as PDF">⬇</button>
+              <button class="iconbtn sharebtn" id="emailShareBtn" title="Share this session by email" aria-label="Share session by email">✉</button>
+            </div>
+            <button class="iconbtn send" id="sendBtn" title="Send" aria-label="Send message">→</button>
+          </div>
         </div>
         <div class="composer-hint"><span>Enter to send</span><span>Shift + Enter for a new line</span></div>
       </div>

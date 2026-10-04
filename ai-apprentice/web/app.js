@@ -592,6 +592,37 @@ $('#micToggle').addEventListener('change', (e) => {
   armMic({ requirePending: !!(isGuide && S.pending) });
 });
 $('#redactToggle').addEventListener('change', async (e) => { S.redact = e.target.checked; await api(`/api/room/${CODE}/redact`, { on: S.redact }); toast(S.redact ? 'Redaction on' : 'Redaction off'); if ($('#queue')) renderQueue(); });
+$('#emailShareBtn').addEventListener('click', () => {
+  const joinLink = `${location.origin}/room.html?code=${CODE}&role=student`;
+  const subject = S.curriculum
+    ? `Mentaur — workflow curriculum: ${S.curriculum.title}`
+    : `Mentaur — session in room ${CODE}`;
+  const lines = [];
+  if (S.curriculum) {
+    lines.push(S.curriculum.summary, '');
+    lines.push('Lessons:');
+    S.curriculum.lessons.slice(0, 8).forEach((L) => {
+      lines.push(`${L.n}. ${L.title} — ${L.did}${L.guardrail ? ` (guardrail: ${L.guardrail})` : ''}`);
+    });
+    lines.push('');
+  } else {
+    lines.push(`Sharing a live Mentaur apprentice session (room ${CODE}).`, '');
+  }
+  lines.push(`Open it / practice it yourself: ${joinLink}`);
+  lines.push('');
+  lines.push('(If you downloaded the PDF from this session, attach it before sending — email links can’t attach files automatically.)');
+  const body = lines.join('\n').slice(0, 1800);
+  location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+});
+$('#exportPdfBtn').addEventListener('click', () => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  $('#printHeader').textContent = `Conversation transcript — Room ${CODE} — ${isGuide ? 'Guide' : 'Student'} — ${stamp}`;
+  const prevTitle = document.title;
+  document.title = `Mentaur — ${CODE} — ${stamp}`;
+  const restore = () => { document.title = prevTitle; window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
+  window.print();
+});
 $('#offRecBtn').addEventListener('click', () => { S.offRecord = !S.offRecord; $('#offRecBtn').classList.toggle('on', S.offRecord); toast(S.offRecord ? 'Next answer off the record' : 'Back on the record'); });
 
 boot();
