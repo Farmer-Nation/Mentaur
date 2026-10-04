@@ -12,7 +12,9 @@ import { redactDeep } from './lib/redact.js';
 import { captureInvoices, teachInvoice, COST_CENTERS } from './lib/scenario.js';
 import { analyzeFrame, visionMode } from './lib/vision.js';
 import { getSignedUrl, tts, voiceMode } from './lib/voice.js';
-import { reasoningMode } from './lib/reasoning.js';
+import { reasoningMode, summarizeScrape } from './lib/reasoning.js';
+import { translateMode, SUPPORTED_LANGS } from './lib/translate.js';
+import { scrapeUrl, scrapeMode } from './lib/scrape.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '../web');
@@ -49,7 +51,7 @@ async function api(req, res, u) {
   const parts = p.split('/').filter(Boolean); // ['api','room',code,action]
 
   if (p === '/api/config' && req.method === 'GET') {
-    return send(res, 200, { visionMode, voiceMode, reasoningMode, visionIntervalMs: VISION_INTERVAL_MS, liveCadence: R.liveCadence, costCenters: COST_CENTERS });
+    return send(res, 200, { visionMode, voiceMode, reasoningMode, translateMode, scrapeMode, supportedLangs: SUPPORTED_LANGS, visionIntervalMs: VISION_INTERVAL_MS, liveCadence: R.liveCadence, costCenters: COST_CENTERS });
   }
   if (p === '/api/scenario' && req.method === 'GET') {
     return send(res, 200, { capture: captureInvoices(), teach: teachInvoice(), costCenters: COST_CENTERS });
@@ -61,9 +63,23 @@ async function api(req, res, u) {
     try { return send(res, 200, { url: await getSignedUrl() }); } catch (e) { return send(res, 200, { url: null, error: e.message }); }
   }
   if (p === '/api/voice/tts' && req.method === 'POST') {
-    const body = await readBody(req); const buf = await tts(body.text || '');
+    const body = await readBody(req); const buf = await tts(body.text || '', body.lang);
     if (!buf) return send(res, 200, { mock: true });
     res.writeHead(200, { 'content-type': 'audio/mpeg' }); return res.end(buf);
+  }
+  if (p === '/api/scrape' && req.method === 'POST') {
+    const body = await readBody(req);
+    const url = String(body.url || '').trim();
+    if (!url) return send(res, 200, { error: 'Paste a URL to scrape.' });
+    if (scrapeMode === 'off') return send(res, 200, { error: 'Bright Data is not configured on this server (BRIGHTDATA_WS_ENDPOINT missing).' });
+    try {
+      const { url: finalUrl, title, text } = await scrapeUrl(url);
+      const summary = await summarizeScrape(finalUrl, title, text);
+      return send(res, 200, { url: finalUrl, title, summary });
+    } catch (e) {
+      console.warn('[scrape] failed:', e.message);
+      return send(res, 200, { error: e.message || 'Scrape failed.' });
+    }
   }
   if (p === '/api/vision' && req.method === 'POST') {
     const body = await readBody(req); const room = R.getRoom(body.code);
@@ -95,6 +111,7 @@ async function api(req, res, u) {
       case 'chat': await R.postChat(room, body); return send(res, 200, { ok: true });
       case 'frame': if (body.frame) R.pushFrame(room, body.frame); return send(res, 200, { ok: true });
       case 'redact': R.setRedact(room, !!body.on); return send(res, 200, { ok: true });
+      case 'language': R.setGuideLanguage(room, body.lang); return send(res, 200, { ok: true, lang: room.guideLanguage });
       case 'speaking': R.setSpeaking(room, !!body.on); return send(res, 200, { ok: true });
       case 'question-mode': R.setQuestionsPaused(room, !!body.paused); return send(res, 200, { ok: true, paused: room.questionsPaused });
       case 'share-state': R.setShareState(room, body); return send(res, 200, { ok: true, shareState: room.shareState });

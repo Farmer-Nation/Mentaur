@@ -16,7 +16,7 @@ const S = {
   costCenters: [], config: null, pending: null, redact: false, offRecord: false,
   speaking: false, micOn: false, recog: null, recogActive: false, micEnding: false,
   micBlocked: false, micDraft: '', voiceAnswerSubmitted: false,
-  curriculum: null, workMap: [],
+  curriculum: null, workMap: [], guideLanguage: 'en',
   teach: null, practiceStarted: false, shareStream: null, sharePaused: false, questionsPaused: false, sharing: false,
   lastVisualFingerprint: null, visionDirty: false, lastVisionSentAt: 0,
   activeAudio: null, speechToken: 0,
@@ -27,20 +27,23 @@ setInterval(() => { $('#sessionClock').textContent = fmt(Date.now() - S.started)
 function fmt(ms) { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
 
 /* ---------- voice ---------- */
-function localSpeak(text) {
+const BCP47 = { en: 'en-US', ja: 'ja-JP', vi: 'vi-VN' };
+function localSpeak(text, lang) {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window)) return setTimeout(resolve, 500 + text.length * 16);
     try {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text.replace(/<[^>]+>/g, ''));
+      u.lang = BCP47[lang] || 'en-US';
       u.rate = 1.02; u.onend = resolve; u.onerror = resolve; speechSynthesis.speak(u);
     } catch { resolve(); }
   });
 }
-async function speak(text) {
+async function speak(text, lang) {
   if (!$('#ttsToggle').checked) return;
   stopSpeech({ announce: false });
   const token = ++S.speechToken;
+  const voiceLang = lang || (isGuide ? S.guideLanguage : 'en');
   if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: true }); S.speaking = true; }
   setOrb('speaking'); setStatus('Speaking…');
   try {
@@ -48,7 +51,7 @@ async function speak(text) {
     // before returning so the microphone never starts underneath Mentaur's voice.
     if (S.config && S.config.voiceMode.startsWith('elevenlabs')) {
       try {
-        const r = await fetch('/api/voice/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+        const r = await fetch('/api/voice/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, lang: voiceLang }) });
         if (token !== S.speechToken) return;
         if (r.ok && r.headers.get('content-type')?.includes('audio')) {
           const url = URL.createObjectURL(await r.blob());
@@ -68,7 +71,7 @@ async function speak(text) {
       } catch { /* use local TTS below */ }
     }
     if (token !== S.speechToken) return;
-    await localSpeak(text);
+    await localSpeak(text, voiceLang);
   } finally {
     if (token === S.speechToken) {
       if (isGuide) { await api(`/api/room/${CODE}/speaking`, { on: false }); S.speaking = false; }
@@ -154,6 +157,7 @@ function startMicCapture() {
   $('#pushToTalk').classList.add('active');
   setStatus('Listening to your voice…');
   api(`/api/room/${CODE}/activity`, { typing: true });
+  S.recog.lang = BCP47[isGuide ? S.guideLanguage : 'en'] || 'en-US';
   try { S.recog.start(); } catch { /* browser is still starting/stopping */ }
 }
 function stopMicCapture() {
@@ -222,6 +226,7 @@ function connect() {
       case 'redact': break;
       case 'question_mode': onQuestionMode(d.paused); break;
       case 'share_state': onShareState(d); break;
+      case 'language': onLanguage(d.lang); break;
     }
   };
 }
@@ -230,15 +235,16 @@ function onEvent(d) {
   if (d.invoices) { S.invoices = d.invoices; if (S.phase === 'capture') renderQueue(); if (S.selected) renderEditor(); }
 }
 async function onAsk(d) {
+  const guideText = d.questionLocal || d.question;
   if (d.repeat && S.pending && S.pending.question === d.question) {
-    addMsg('agent', `I’m still waiting — ${d.question}`, { guardrail: d.guardrail });
+    addMsg('agent', `I’m still waiting — ${guideText}`, { guardrail: d.guardrail });
   } else {
     S.pending = d;
     S.voiceAnswerSubmitted = false;
-    if (isGuide) addMsg('agent', d.question, { guardrail: d.guardrail });
+    if (isGuide) addMsg('agent', guideText, { guardrail: d.guardrail });
   }
   if (isGuide) {
-    await speak(d.repeat ? `I’m still waiting for your answer. ${d.question}` : d.question);
+    await speak(d.repeat ? `I’m still waiting for your answer. ${guideText}` : guideText, S.guideLanguage);
     setStatus('Waiting for your answer…');
   }
   else { addMsg('agent', d.question, { guardrail: d.guardrail, lbl: 'Apprentice → Guide' }); }
@@ -247,12 +253,39 @@ function onAck(d) {
   if (isGuide) {
     const spoken = d.spoken || (d.guardrail ? 'Got it — I’ll treat that as a guardrail.' : 'Got it — that helps me understand the decision.');
     addMsg('agent', spoken);
-    speak(spoken);
+    speak(spoken, S.guideLanguage);
   }
   S.pending = null; S.voiceAnswerSubmitted = false; renderCoverage(d.coverage);
 }
+/* ---------- language ---------- */
+const LANG_NAME = { en: 'English', ja: 'Japanese', vi: 'Vietnamese' };
+function renderLanguageUI() {
+  if (isGuide) {
+    $('#langPicker').style.display = 'flex';
+    $('#langIndicator').style.display = 'none';
+    document.querySelectorAll('.lang-opt').forEach((b) => b.classList.toggle('active', b.dataset.lang === S.guideLanguage));
+  } else {
+    $('#langPicker').style.display = 'none';
+    const ind = $('#langIndicator');
+    if (S.guideLanguage === 'en') { ind.style.display = 'none'; }
+    else { ind.style.display = 'inline-flex'; ind.textContent = `Guide explains in ${LANG_NAME[S.guideLanguage]} · shown to you in English`; }
+  }
+}
+function onLanguage(lang) { S.guideLanguage = lang; renderLanguageUI(); }
+async function setGuideLanguage(lang) {
+  if (lang === S.guideLanguage) return;
+  S.guideLanguage = lang; renderLanguageUI();
+  await api(`/api/room/${CODE}/language`, { lang });
+  toast(lang === 'en' ? 'Explaining in English' : `Explaining in ${LANG_NAME[lang]}`);
+}
+document.querySelectorAll('.lang-opt').forEach((btn) => btn.addEventListener('click', () => setGuideLanguage(btn.dataset.lang)));
+
 function onChat(msg, { speakStudentQuestion = true, speakAgent = true } = {}) {
-  if (msg.from === 'guide') addMsg('guide', msg.text);
+  if (msg.from === 'guide') {
+    const showOriginal = isGuide && msg.original;
+    const opts = (!isGuide && msg.original) ? { lbl: `Guide · translated from ${LANG_NAME[S.guideLanguage] || 'their language'}` } : {};
+    addMsg('guide', showOriginal ? msg.original : msg.text, opts);
+  }
   else if (msg.from === 'student') {
     addMsg('student', msg.text);
     if (speakStudentQuestion && S.phase !== 'practice') {
@@ -285,6 +318,7 @@ async function boot() {
   if (view.error) { $('#surface').innerHTML = `<div class="intro"><h3>Room not found</h3><p>The code <b>${CODE}</b> isn’t active. <a href="/">Go back</a> and check it.</p></div>`; return; }
   S.invoices = view.invoices; S.phase = view.phase; S.curriculum = view.curriculum; S.workMap = view.workMap;
   S.questionsPaused = !!view.controls?.questionsPaused; S.sharePaused = !!view.controls?.shareState?.paused; S.sharing = !!view.controls?.shareState?.sharing;
+  S.guideLanguage = view.guideLanguage || 'en'; renderLanguageUI();
   renderPresence(view.presence);
   connect();
 
@@ -699,5 +733,108 @@ document.addEventListener('keyup', (e) => { if (e.key === ' ') endPushToTalk(e);
 $('#redactToggle').addEventListener('change', async (e) => { S.redact = e.target.checked; await api(`/api/room/${CODE}/redact`, { on: S.redact }); toast(S.redact ? 'Redaction on' : 'Redaction off'); if ($('#queue')) renderQueue(); });
 $('#offRecBtn').addEventListener('click', () => { S.offRecord = !S.offRecord; $('#offRecBtn').classList.toggle('on', S.offRecord); toast(S.offRecord ? 'Next answer off the record' : 'Back on the record'); });
 $('#stopVoiceBtn').addEventListener('click', () => stopSpeech());
+$('#exportPdfBtn').addEventListener('click', exportConversationPdf);
+
+/* ---------- PDF export ---------- */
+function exportConversationPdf() {
+  const win = window.open('', '_blank');
+  if (!win) { toast('Allow pop-ups to export the PDF.'); return; }
+
+  const generatedAt = new Date().toLocaleString();
+  const duration = fmt(Date.now() - S.started);
+  const transcriptHtml = $('#transcript').innerHTML || '<p>No conversation yet.</p>';
+
+  let curriculumHtml = '';
+  if (S.curriculum) {
+    const c = S.curriculum;
+    curriculumHtml = `
+      <h2>${c.title || 'Work Map'}</h2>
+      <p class="pdf-summary">${c.summary || ''}</p>
+      ${(c.lessons || []).map((L) => `
+        <div class="pdf-lesson">
+          <h3>${L.n}. ${L.title}</h3>
+          <p><b>Did:</b> ${L.did}</p>
+          <p><b>Why:</b> “${L.reason}”</p>
+          <p><b>When to stop:</b> ${L.guardrail}</p>
+          <p><b>Check:</b> ${L.check}</p>
+        </div>`).join('')}`;
+  }
+
+  win.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Mentaur session ${CODE}</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;color:#1a1420;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.55}
+  h1{font-size:24px;margin-bottom:2px}
+  .meta{color:#6b6470;font-size:13px;margin-bottom:28px}
+  h2{font-size:18px;margin-top:32px;border-bottom:1px solid #ddd;padding-bottom:6px}
+  .pdf-summary{font-size:13.5px;color:#4a4350}
+  .msg{margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #eee}
+  .lbl{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#595164;margin-bottom:3px}
+  .bubble{font-size:13.5px}
+  .guardtag{display:inline-block;margin-left:6px;font-size:9px;font-weight:800;background:#fff2d8;color:#7a5d00;padding:2px 6px;border-radius:999px}
+  .redacted{background:#111;color:#111;border-radius:3px}
+  .pdf-lesson{margin-bottom:18px}
+  .pdf-lesson h3{font-size:14.5px;margin-bottom:4px}
+  .pdf-lesson p{font-size:13px;margin:2px 0}
+  @media print{ body{margin:0;padding:24px} }
+</style></head>
+<body>
+  <h1>Mentaur — Conversation export</h1>
+  <div class="meta">Room ${CODE} · ${isGuide ? 'Guide' : 'Student'} view · Session length ${duration} · Generated ${generatedAt}</div>
+  <h2>Conversation</h2>
+  <div class="pdf-transcript">${transcriptHtml}</div>
+  ${curriculumHtml}
+</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+/* ---------- scrape chatbot widget ---------- */
+(function scrapeWidget() {
+  const fab = $('#scrapeFab'), panel = $('#scrapePanel'), close = $('#scrapeClose');
+  const log = $('#scrapeLog'), input = $('#scrapeInput'), send = $('#scrapeSend');
+  if (!fab) return;
+  // Scraped titles/summaries come from arbitrary third-party pages, so they're
+  // rendered as plain text nodes only — never innerHTML — to avoid XSS.
+  function addScrapeMsg(role, text) {
+    const m = el('div', `scrape-msg ${role}`);
+    m.textContent = text;
+    log.appendChild(m); log.scrollTop = log.scrollHeight;
+    return m;
+  }
+  function addScrapeResult(title, summary) {
+    const m = el('div', 'scrape-msg bot');
+    const strong = document.createElement('b'); strong.textContent = title;
+    m.appendChild(strong);
+    m.appendChild(document.createElement('br'));
+    m.appendChild(document.createTextNode(summary));
+    log.appendChild(m); log.scrollTop = log.scrollHeight;
+  }
+  const setOpen = (open) => { panel.classList.toggle('hidden', !open); fab.setAttribute('aria-expanded', String(open)); if (open) input.focus(); };
+  fab.addEventListener('click', () => setOpen(panel.classList.contains('hidden')));
+  close.addEventListener('click', () => setOpen(false));
+
+  async function runScrape() {
+    const url = input.value.trim();
+    if (!url) return;
+    input.value = ''; input.disabled = true; send.disabled = true;
+    addScrapeMsg('user', url);
+    const loading = addScrapeMsg('bot loading', 'Scraping via Bright Data…');
+    try {
+      const out = await api('/api/scrape', { url });
+      loading.remove();
+      if (out.error) addScrapeMsg('error', out.error);
+      else addScrapeResult(out.title || out.url, out.summary);
+    } catch {
+      loading.remove();
+      addScrapeMsg('error', 'Could not reach the scraping service.');
+    } finally {
+      input.disabled = false; send.disabled = false; input.focus();
+    }
+  }
+  send.addEventListener('click', runScrape);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runScrape(); } });
+})();
 
 boot();

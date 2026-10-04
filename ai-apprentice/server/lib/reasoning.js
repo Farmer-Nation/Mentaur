@@ -219,6 +219,27 @@ What the new hire did: ${verdict.scoreNote}`;
   return { ...verdict, question: out && out.message ? out.message : verdict.question };
 }
 
+// Turn a scraped page (from the Bright Data chat widget) into a short, readable
+// answer. Falls back to a plain excerpt when no Claude key is configured.
+export async function summarizeScrape(url, title, text) {
+  const clean = String(text || '').trim();
+  if (reasoningMode === 'mock' || !clean) {
+    const excerpt = clean.slice(0, 500);
+    return `**${title || url}**\n\n${excerpt}${clean.length > 500 ? '…' : ''}`;
+  }
+  const sys = `Summarize this scraped web page for someone who didn't open it themselves.
+Write 3-5 concise sentences covering the most important facts, numbers, or claims.
+Do not invent anything that isn't in the page text.`;
+  const usr = `URL: ${url}\nTitle: ${title}\nPage text:\n${clean.slice(0, 6000)}`;
+  try {
+    const out = await claude(sys, usr, 350);
+    return out.trim() || clean.slice(0, 500);
+  } catch (err) {
+    console.warn(`[reasoning] scrape summary unavailable: ${err.message}`);
+    return clean.slice(0, 500);
+  }
+}
+
 export async function answerStudentQuestion(room, question) {
   const steps = buildWorkMap(room);
   if (reasoningMode === 'mock') {

@@ -50,6 +50,7 @@
             <div class="statusline" id="statusline">Connecting…</div>
           </div>
           <div class="listening-badge"><span></span> live</div>
+          <button class="pdf-export-btn" id="exportPdfBtn" type="button" title="Export this conversation as a PDF" aria-label="Export conversation as PDF">⬇ PDF</button>
         </div>
       </div>
 
@@ -72,6 +73,13 @@
           <label class="toolchip"><input type="checkbox" id="ttsToggle" checked><span class="toggle-ui"></span> Speak replies</label>
           <button class="toolchip stop-voice" id="stopVoiceBtn" type="button">■ Stop Mentaur</button>
           <label class="toolchip rec"><input type="checkbox" id="redactToggle"><span class="toggle-ui"></span> Redact PII</label>
+          <div class="lang-picker" id="langPicker" role="group" aria-label="Explain in language" style="display:none">
+            <span class="lang-label">Explain in</span>
+            <button type="button" class="lang-opt" data-lang="en">EN</button>
+            <button type="button" class="lang-opt" data-lang="ja">日本語</button>
+            <button type="button" class="lang-opt" data-lang="vi">Tiếng Việt</button>
+          </div>
+          <span class="toolchip lang-indicator" id="langIndicator" style="display:none"></span>
         </div>
         <div class="row">
           <textarea id="replyBox" placeholder="Reply to Mentaur…" rows="1" aria-label="Message Mentaur"></textarea>
@@ -84,6 +92,22 @@
   </main>
 </div>
 <div class="toast" id="toast" role="status"></div>
+
+<button class="scrape-fab" id="scrapeFab" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="scrapePanel" title="Scrape a web page">🌐</button>
+<div class="scrape-panel hidden" id="scrapePanel" role="dialog" aria-label="Web scraping assistant">
+  <div class="scrape-head">
+    <div><b>Scrape Assistant</b><span>Powered by Bright Data</span></div>
+    <button class="scrape-close" id="scrapeClose" type="button" aria-label="Close">×</button>
+  </div>
+  <div class="scrape-log" id="scrapeLog">
+    <div class="scrape-msg bot">Paste a URL and I’ll fetch it through Bright Data’s Scraping Browser — real rendered page, proxies and CAPTCHA handling included.</div>
+  </div>
+  <div class="scrape-row">
+    <input id="scrapeInput" type="text" placeholder="https://…" inputmode="url" />
+    <button id="scrapeSend" type="button" aria-label="Scrape">→</button>
+  </div>
+</div>
+
 <script type="module" src="/app.js"></script>
 </body>
 </html>

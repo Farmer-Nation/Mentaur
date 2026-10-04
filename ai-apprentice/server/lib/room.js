@@ -10,6 +10,7 @@ import { simpleDemoInvoices, teachInventoryCases } from './scenario.js';
 import * as planner from './planner.js';
 import { buildWorkMap, toAgentJSON } from './workmap.js';
 import { phraseGuideQuestion, studentSuggestions, idleGuideQuestion, buildCurriculum, practiceFeedback, summarizeAnswer, generateDebriefQuestions, answerStudentQuestion } from './reasoning.js';
+import { translateTo, SUPPORTED_LANGS } from './translate.js';
 
 const rooms = new Map(); // code -> room
 const subs = new Map(); // code -> Set<{res, role, id}>
@@ -40,6 +41,7 @@ export function createRoom() {
     practice: {}, practiceCompleted: new Set(), latestFrame: null, redact: false,
     screenSummary: '', lastVisionQuestion: null, lastActivitySummary: '', lastSummaryAt: -Infinity,
     questionsPaused: false, shareState: { sharing: false, paused: false },
+    guideLanguage: 'en',
     lastStudentQuestionAt: 0, lastQuestionAt: 0, lastQuestionAttemptAt: 0,
     ackUntil: 0,
     lastSuggestionsAt: -Infinity, suggestionsBusy: false, idleQuestionBusy: false,
@@ -57,6 +59,7 @@ export function roomView(room) {
     suggestions: room.suggestions, coverage: planner.coverage(room.invoices, room.qa),
     workMap: room.workMap, curriculum: room.curriculum, redact: room.redact,
     controls: { questionsPaused: room.questionsPaused, shareState: room.shareState },
+    guideLanguage: room.guideLanguage,
     latestFrame: room.latestFrame,
     presence: { guide: room.guidePresent, students: room.students },
   };
@@ -207,11 +210,10 @@ async function refreshSuggestions(room) {
 
 // ---- chat: either side can speak/type ----
 export async function postChat(room, { from, text, to }) {
-  const msg = { from, text, t: now(room) };
-  room.chat.push(msg);
-  broadcast(room, { type: 'chat', msg });
-
   if (from === 'student') {
+    const msg = { from, text, t: now(room) };
+    room.chat.push(msg);
+    broadcast(room, { type: 'chat', msg });
     // a student question for the guide; also captured as a clarification
     room.lastStudentQuestionAt = now(room);
     room.qa.push({ q: `(student) ${text}`, a: null, invId: null, stepKey: 'student_q', guardrail: false, t: now(room) });
@@ -231,18 +233,36 @@ export async function postChat(room, { from, text, to }) {
     return;
   }
   if (from === 'guide') {
+    // The Guide explains in their chosen language; everything downstream (qa,
+    // curriculum, the Student's transcript) runs in English, so translate once
+    // here. The Guide's own transcript still shows exactly what they typed.
+    const lang = room.guideLanguage || 'en';
+    let textEn = text;
+    if (lang !== 'en') {
+      try { textEn = await translateTo(text, 'en'); }
+      catch (err) { console.warn(`[translate] guide->en unavailable: ${err.message}`); }
+    }
+    const msg = { from, text: textEn, t: now(room) };
+    if (lang !== 'en') msg.original = text;
+    room.chat.push(msg);
+    broadcast(room, { type: 'chat', msg });
+
     // guide speaking: if answering the AI's pending question, capture it
     if (room.pending) {
       const q = room.pending;
-      room.qa.push({ q: q.q, a: text, invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
+      room.qa.push({ q: q.q, a: textEn, invId: q.invId, stepKey: q.stepKey, guardrail: q.guardrail, t: now(room) });
       room.pending = null;
       room.ackUntil = now(room) + 3500;
       let idea;
       try {
-        idea = await summarizeAnswer(room, q.q, text);
+        idea = await summarizeAnswer(room, q.q, textEn);
       } catch (err) {
         console.warn(`[reasoning] answer summary unavailable: ${err.message}`);
         idea = `Got it — thanks for explaining.`;
+      }
+      if (lang !== 'en') {
+        try { idea = await translateTo(idea, lang); }
+        catch (err) { console.warn(`[translate] ack unavailable: ${err.message}`); }
       }
       broadcast(room, {
         type: 'ack', guardrail: q.guardrail, coverage: planner.coverage(room.invoices, room.qa),
@@ -253,13 +273,21 @@ export async function postChat(room, { from, text, to }) {
     } else {
       // guide answering a student's open question → attach to the latest student_q
       const open = [...room.qa].reverse().find((x) => x.stepKey === 'student_q' && x.a === null);
-      if (open) open.a = text;
+      if (open) open.a = textEn;
     }
     refreshSuggestions(room);
   }
 }
 
 export function setRedact(room, on) { room.redact = on; broadcast(room, { type: 'redact', on }); }
+// The Guide's chosen explanation language. When set to 'ja'/'vi', the Guide's
+// answers are translated to English before they're used for qa/curriculum and
+// relayed to the Student; Mentaur's questions to the Guide are translated the
+// other way so the Guide hears/reads them in their own language.
+export function setGuideLanguage(room, lang) {
+  room.guideLanguage = SUPPORTED_LANGS.includes(lang) ? lang : 'en';
+  broadcast(room, { type: 'language', lang: room.guideLanguage });
+}
 export function setSpeaking(room, on) { room.speaking = on; }
 export function setOffRecord(room, on) { room.offRecord = on; }
 
@@ -278,7 +306,7 @@ export async function startDebrief(room) {
   broadcast(room, { type: 'phase', phase: 'debrief' });
   nextDebrief(room);
 }
-function nextDebrief(room) {
+async function nextDebrief(room) {
   room.debriefIdx++;
   if (room.debriefIdx >= room.debriefQ.length) {
     room.phase = 'teachback';
@@ -286,8 +314,14 @@ function nextDebrief(room) {
     return;
   }
   const q = room.debriefQ[room.debriefIdx];
-  room.pending = { ...q, debrief: true, askedAt: now(room), repeatCount: 0 };
-  broadcast(room, { type: 'ask', question: q.q, guardrail: q.guardrail, progress: { i: room.debriefIdx + 1, n: room.debriefQ.length } });
+  const lang = room.guideLanguage || 'en';
+  let questionLocal = q.q;
+  if (lang !== 'en') {
+    try { questionLocal = await translateTo(q.q, lang); }
+    catch (err) { console.warn(`[translate] debrief question unavailable: ${err.message}`); }
+  }
+  room.pending = { ...q, questionLocal, debrief: true, askedAt: now(room), repeatCount: 0 };
+  broadcast(room, { type: 'ask', question: q.q, questionLocal, guardrail: q.guardrail, progress: { i: room.debriefIdx + 1, n: room.debriefQ.length } });
 }
 export async function confirmTeachback(room) {
   room.workMap = buildWorkMap(room);
@@ -383,15 +417,21 @@ export function startWatcher() {
         const cand = room.queued; room.queued = null;
         const phrased = await phraseGuideQuestion(room, cand).catch(() => cand);
         if (!phrased || !phrased.q) continue;
-        room.pending = { ...phrased, askedAt: now(room), repeatCount: 0 };
+        const lang = room.guideLanguage || 'en';
+        let questionLocal = phrased.q;
+        if (lang !== 'en') {
+          try { questionLocal = await translateTo(phrased.q, lang); }
+          catch (err) { console.warn(`[translate] question unavailable: ${err.message}`); }
+        }
+        room.pending = { ...phrased, questionLocal, askedAt: now(room), repeatCount: 0 };
         room.askedKeys.add(cand.key); room.lastQuestionAt = now(room);
-        broadcast(room, { type: 'ask', question: phrased.q, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId });
+        broadcast(room, { type: 'ask', question: phrased.q, questionLocal, guardrail: phrased.guardrail, stepKey: phrased.stepKey, invId: phrased.invId });
       }
       if (room.pending && !room.speaking && at - (room.pending.askedAt || 0) >= QUESTION_REPEAT_MS) {
         room.pending.askedAt = at;
         room.pending.repeatCount = (room.pending.repeatCount || 0) + 1;
         broadcast(room, {
-          type: 'ask', question: room.pending.q, guardrail: room.pending.guardrail,
+          type: 'ask', question: room.pending.q, questionLocal: room.pending.questionLocal, guardrail: room.pending.guardrail,
           stepKey: room.pending.stepKey, invId: room.pending.invId,
           repeat: true, repeatCount: room.pending.repeatCount,
         });
