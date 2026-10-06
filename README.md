@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/Farmer-Nation/hacknation/blob/main/mentaur%20logo.png?raw=true" alt="Mentaur logo" width="110" />
+  <img src="https://github.com/Farmer-Nation/Mentaur/blob/main/mentaur-logo.png?raw=true" alt="Mentaur logo" width="110" />
   <h1>Mentaur</h1>
   <p><strong>Screen-aware AI apprenticeship platform built with Node.js, Supabase, Claude, and ElevenLabs.</strong></p>
   <p>
